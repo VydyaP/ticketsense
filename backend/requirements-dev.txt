@@ -1,0 +1,9 @@
+# Development, testing and model-training dependencies (not shipped in the image).
+-r requirements.txt
+pandas==2.3.3
+matplotlib==3.11.2
+httpx==0.28.1
+pytest==8.4.2
+pytest-asyncio==0.26.0
+ruff==0.17.6
+pre-commit>=3.7,<5

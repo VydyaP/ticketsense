@@ -1,11 +1,11 @@
+# Local stack: Postgres + API + frontend.   docker compose up --build
+# Frontend: http://localhost:5173   API docs: http://localhost:8000/docs
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: ticketsense-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_PASSWORD: postgres # local development only
       POSTGRES_DB: ticketsense
     ports:
       - "5432:5432"
@@ -15,41 +15,31 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ticketsense"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: ticketsense-backend
-    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgrespassword@postgres:5432/ticketsense
-      SYNC_DATABASE_URL: postgresql://postgres:postgrespassword@postgres:5432/ticketsense
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ticketsense
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       ENVIRONMENT: development
-      PORT: 8000
-      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173
     ports:
       - "8000:8000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    container_name: ticketsense-frontend
-    restart: unless-stopped
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_healthy # uses the HEALTHCHECK defined in backend/Dockerfile
     environment:
+      # The browser calls the API directly on the host's port 8000.
       VITE_API_URL: http://localhost:8000
     ports:
       - "5173:5173"

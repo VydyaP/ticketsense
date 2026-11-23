@@ -1,13 +1,9 @@
-# Dockerfile for Frontend Development in Docker Compose
+# Development image for docker compose (Vite dev server with hot reload).
+# Production frontend is built and hosted by Vercel (`npm run build`).
 FROM node:20-alpine
-
 WORKDIR /app
-
-COPY frontend/package*.json ./
-RUN npm install
-
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend ./
-
 EXPOSE 5173
-
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

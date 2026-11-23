@@ -19,7 +19,7 @@
 - **Human feedback**: agents correct a wrong category; the correction is stored next to the original prediction as labelled data for retraining.
 - **Dashboard**: counts by category, priority and status, plus the model's real test-set metrics.
 - **Monitoring**: `/health` (DB + model readiness), `/metrics` (Prometheus), JSON logs with a request ID on every line.
-- **Engineering**: 17 backend tests against real PostgreSQL, 6 frontend tests, lint + format checks, Docker, CI on every push.
+- **Engineering**: 23 backend tests (API tests against real PostgreSQL), 6 frontend tests, lint + format checks, Docker, CI on every push.
 
 ![Ticket queue](docs/screenshots/tickets.png)
 

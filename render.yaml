@@ -1,0 +1,21 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo.
+# Secrets are NOT stored here: Render asks for values marked `sync: false`.
+services:
+  - type: web
+    name: ticketsense-api
+    runtime: docker
+    plan: free
+    region: singapore # closest Render region to India; pick the same region for Neon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL # Neon connection string
+        sync: false
+      - key: CORS_ORIGINS # the Vercel frontend URL, e.g. https://ticketsense.vercel.app
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO

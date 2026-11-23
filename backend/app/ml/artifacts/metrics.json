@@ -1,0 +1,93 @@
+{
+  "dataset": {
+    "name": "Public IT Helpdesk Support Dataset",
+    "license": "MIT License",
+    "source": "https://raw.githubusercontent.com/vanessaaleung/support-ticket-nlp/master/all_tickets.csv",
+    "total_samples": 48545,
+    "train_samples": 38836,
+    "test_samples": 9709
+  },
+  "category_model": {
+    "algorithm": "TF-IDF (1-2 ngrams, sublinear_tf) + Multinomial Logistic Regression (balanced)",
+    "accuracy": 0.8397,
+    "macro_f1": 0.6519,
+    "weighted_f1": 0.8514,
+    "classes": [
+      "Access/Account",
+      "Facilities",
+      "Hardware",
+      "Network",
+      "Other",
+      "Software"
+    ],
+    "per_class": {
+      "Access/Account": {
+        "precision": 0.957,
+        "recall": 0.8657,
+        "f1_score": 0.909,
+        "support": 6811
+      },
+      "Facilities": {
+        "precision": 0.5489,
+        "recall": 0.7935,
+        "f1_score": 0.6489,
+        "support": 184
+      },
+      "Hardware": {
+        "precision": 0.7918,
+        "recall": 0.8111,
+        "f1_score": 0.8013,
+        "support": 1927
+      },
+      "Network": {
+        "precision": 0.408,
+        "recall": 0.7376,
+        "f1_score": 0.5254,
+        "support": 526
+      },
+      "Other": {
+        "precision": 0.4822,
+        "recall": 0.6419,
+        "f1_score": 0.5507,
+        "support": 148
+      },
+      "Software": {
+        "precision": 0.4062,
+        "recall": 0.5752,
+        "f1_score": 0.4762,
+        "support": 113
+      }
+    }
+  },
+  "priority_model": {
+    "algorithm": "TF-IDF + Multinomial Logistic Regression (balanced)",
+    "accuracy": 0.8815,
+    "macro_f1": 0.7432,
+    "weighted_f1": 0.883,
+    "classes": [
+      "High",
+      "Low",
+      "Medium"
+    ],
+    "per_class": {
+      "High": {
+        "precision": 0.7146,
+        "recall": 0.6794,
+        "f1_score": 0.6966,
+        "support": 1703
+      },
+      "Low": {
+        "precision": 0.9858,
+        "recall": 0.9801,
+        "f1_score": 0.983,
+        "support": 6890
+      },
+      "Medium": {
+        "precision": 0.5226,
+        "recall": 0.5806,
+        "f1_score": 0.5501,
+        "support": 1116
+      }
+    }
+  }
+}

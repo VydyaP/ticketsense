@@ -1,0 +1,236 @@
+{
+  "0": {
+    "mapped_to": "Other",
+    "tickets": 4,
+    "top_terms": [
+      "pc",
+      "encrypting",
+      "moving",
+      "weekly",
+      "install",
+      "report",
+      "need",
+      "create",
+      "laptop",
+      "zoom",
+      "explicit",
+      "explaining"
+    ]
+  },
+  "1": {
+    "mapped_to": "Other",
+    "tickets": 72,
+    "top_terms": [
+      "reset",
+      "password",
+      "july",
+      "sn",
+      "error",
+      "hi",
+      "pm",
+      "regards",
+      "controller",
+      "report",
+      "application",
+      "permissions"
+    ]
+  },
+  "2": {
+    "mapped_to": "Other",
+    "tickets": 3,
+    "top_terms": [
+      "leave",
+      "days",
+      "annual",
+      "direct",
+      "calls",
+      "manager",
+      "sent",
+      "reports",
+      "error",
+      "hold",
+      "lieu",
+      "december"
+    ]
+  },
+  "3": {
+    "mapped_to": "Other",
+    "tickets": 137,
+    "top_terms": [
+      "password",
+      "pc",
+      "log",
+      "help",
+      "swap",
+      "issues",
+      "need",
+      "set",
+      "cable",
+      "laptop",
+      "outlook",
+      "connect"
+    ]
+  },
+  "4": {
+    "mapped_to": "Accounts & Applications",
+    "tickets": 34058,
+    "top_terms": [
+      "pm",
+      "hi",
+      "thank",
+      "access",
+      "hello",
+      "thanks",
+      "regards",
+      "error",
+      "add",
+      "confluence",
+      "change",
+      "help"
+    ]
+  },
+  "5": {
+    "mapped_to": "Hardware & Equipment",
+    "tickets": 9633,
+    "top_terms": [
+      "po",
+      "purchase",
+      "monitor",
+      "administrator",
+      "log",
+      "regards",
+      "laptop",
+      "pm",
+      "purchased",
+      "dear",
+      "item",
+      "kind"
+    ]
+  },
+  "6": {
+    "mapped_to": "Infrastructure & Servers",
+    "tickets": 2628,
+    "top_terms": [
+      "server",
+      "engineer",
+      "regards",
+      "hello",
+      "pm",
+      "access",
+      "hi",
+      "connection",
+      "thank",
+      "machine",
+      "test",
+      "thanks"
+    ]
+  },
+  "7": {
+    "mapped_to": "Physical Access & Badges",
+    "tickets": 921,
+    "top_terms": [
+      "card",
+      "access",
+      "starter",
+      "enabling",
+      "area",
+      "cards",
+      "pm",
+      "form",
+      "va",
+      "visitor",
+      "secure",
+      "new"
+    ]
+  },
+  "8": {
+    "mapped_to": "Monitoring Alerts",
+    "tickets": 239,
+    "top_terms": [
+      "alert",
+      "critical",
+      "tape",
+      "occurred",
+      "source",
+      "recovery",
+      "data",
+      "console",
+      "following",
+      "status",
+      "monitoring",
+      "restore"
+    ]
+  },
+  "9": {
+    "mapped_to": "Procurement & Quotes",
+    "tickets": 191,
+    "top_terms": [
+      "purchase",
+      "quote",
+      "ct",
+      "need",
+      "tv",
+      "request",
+      "sent",
+      "equipment",
+      "regards",
+      "manager",
+      "final",
+      "price"
+    ]
+  },
+  "10": {
+    "mapped_to": "Other",
+    "tickets": 2,
+    "top_terms": [
+      "render",
+      "relocation",
+      "review",
+      "submit",
+      "sensitive",
+      "term",
+      "key",
+      "short",
+      "way",
+      "looking",
+      "frustrating",
+      "consuming"
+    ]
+  },
+  "11": {
+    "mapped_to": "Physical Access & Badges",
+    "tickets": 612,
+    "top_terms": [
+      "card",
+      "lost",
+      "access",
+      "badge",
+      "door",
+      "sent",
+      "event",
+      "visitor",
+      "floor",
+      "details",
+      "notification",
+      "open"
+    ]
+  },
+  "12": {
+    "mapped_to": "Other",
+    "tickets": 45,
+    "top_terms": [
+      "report",
+      "availability",
+      "capacity",
+      "links",
+      "october",
+      "uptime",
+      "reporting",
+      "summary",
+      "december",
+      "kindly",
+      "digital",
+      "analyst"
+    ]
+  }
+}

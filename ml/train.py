@@ -1,14 +1,24 @@
 """
-TicketSense ML Training Pipeline.
+TicketSense ML training pipeline.
 
-Reproducibly trains and evaluates text classification models for IT ticket
-category and priority triage, saving the combined model artifact, metrics.json,
-and confusion matrix visualization.
+Run from the repo root:  python ml/train.py
+
+What it does, in order:
+1. Downloads the Endava support-ticket dataset (if not cached in data/) and
+   verifies its SHA-256 checksum so every run trains on exactly the same file.
+2. Turns the dataset's anonymized numeric labels into human-readable labels
+   (see CATEGORY_NAMES / map_priority below for how and why).
+3. Splits 80/20 (stratified, fixed seed), trains two TF-IDF + Logistic
+   Regression pipelines (category and priority), and evaluates them on the
+   held-out 20% against a majority-class baseline.
+4. Writes ml/metrics.json, ml/confusion_matrix.png, ml/category_evidence.json
+   and the model artifact used by the API.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import urllib.request
@@ -16,162 +26,155 @@ from pathlib import Path
 from typing import Any
 
 import joblib
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import seaborn as sns
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend: no display needed (CI, servers)
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import sklearn  # noqa: E402
+from sklearn.dummy import DummyClassifier  # noqa: E402
+from sklearn.feature_extraction.text import TfidfVectorizer  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.metrics import (  # noqa: E402
+    ConfusionMatrixDisplay,
+    accuracy_score,
+    classification_report,
+    f1_score,
+)
+from sklearn.model_selection import train_test_split  # noqa: E402
+from sklearn.pipeline import Pipeline  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_DATASET_URL = (
+RANDOM_STATE = 42
+
+# --- Dataset provenance -------------------------------------------------------
+# The dataset was published by Microsoft + Endava in the MIT-licensed repo
+# https://github.com/karolzak/support-tickets-classification . Its official
+# download link (an Azure blob SAS URL) expired in 2022, so we download an
+# identical public mirror and pin its checksum.
+ORIGINAL_SOURCE = "https://github.com/karolzak/support-tickets-classification"
+DATASET_URL = (
     "https://raw.githubusercontent.com/vanessaaleung/support-ticket-nlp/master/all_tickets.csv"
 )
+DATASET_SHA256 = "26ef6f2e5c800371b4d7505070a71e15535c3a7b57c3ac0deb8a4ff8823c64c8"
 
-# Standard IT Helpdesk Category Mapping for Endava ITSM Dataset
-CATEGORY_MAPPING = {
-    4: "Access/Account",
-    5: "Hardware",
-    6: "Network",
-    7: "Facilities",
-    3: "Software",
-    8: "Software",
-    9: "Software",
+# --- Label mapping ------------------------------------------------------------
+# The published dataset is anonymized: `category` is an integer 0-12 produced by
+# sklearn's LabelEncoder, and the original category names were NOT released.
+# The names below are OUR interpretation, chosen by reading sample tickets and
+# the top TF-IDF terms of each code (regenerated on every run into
+# ml/category_evidence.json so anyone can check them). Codes whose content is
+# mixed or that have too few examples to learn from are grouped as "Other".
+CATEGORY_NAMES: dict[int, str] = {
+    4: "Accounts & Applications",  # access requests, passwords, app issues, joiners/leavers
+    5: "Hardware & Equipment",  # monitors, laptops, peripherals
+    6: "Infrastructure & Servers",  # servers, connectivity, outages, deployments
+    7: "Physical Access & Badges",  # access cards, secure areas, visitor cards
+    11: "Physical Access & Badges",  # lost badges, door events
+    8: "Monitoring Alerts",  # automated "critical alert" emails (backups, sync)
+    9: "Procurement & Quotes",  # purchase requisitions, equipment quotes
 }
+OTHER_CATEGORY = "Other"  # codes 0, 1, 2, 3, 10, 12 (mixed content or < 140 tickets each)
 
 
-def map_category(raw_val: Any) -> str:
-    """Map numeric category code to standard human-readable category."""
-    try:
-        val = int(raw_val)
-        return CATEGORY_MAPPING.get(val, "Other")
-    except (ValueError, TypeError):
-        return "Other"
+def map_category(code: int) -> str:
+    """Map an anonymized category code to our human-readable category."""
+    return CATEGORY_NAMES.get(int(code), OTHER_CATEGORY)
 
 
-def map_priority(urgency_val: Any) -> str:
-    """Map ITIL urgency level to High, Medium, or Low priority."""
-    try:
-        val = int(urgency_val)
-        if val in (0, 1):
-            return "High"
-        if val == 2:
-            return "Medium"
-        return "Low"
-    except (ValueError, TypeError):
+def map_priority(urgency: int) -> str:
+    """Map the anonymized urgency code (0-3) to High / Medium / Low.
+
+    ASSUMPTION: lower code = more urgent, as in the usual ITIL scale
+    (1-Critical ... 4-Low). Supporting evidence: code 3 holds 71% of tickets
+    (most help-desk tickets are low urgency), and the words
+    "urgent/asap/critical/immediately" are about twice as frequent in codes 0-2
+    as in code 3. This is documented as an assumption in the README.
+    """
+    urgency = int(urgency)
+    if urgency <= 1:
+        return "High"
+    if urgency == 2:
         return "Medium"
+    return "Low"
 
 
-class TicketClassifierBundle:
-    """Bundle containing both category and priority trained pipelines."""
-
-    def __init__(self, category_pipeline: Pipeline, priority_pipeline: Pipeline):
-        self.category_pipeline = category_pipeline
-        self.priority_pipeline = priority_pipeline
-        self.categories = list(category_pipeline.classes_)
-        self.priorities = list(priority_pipeline.classes_)
-
-    def predict(self, texts: list[str]) -> list[dict[str, Any]]:
-        """Predict category and priority with confidence scores for input texts."""
-        cat_probs = self.category_pipeline.predict_proba(texts)
-        prio_probs = self.priority_pipeline.predict_proba(texts)
-
-        results = []
-        for i in range(len(texts)):
-            cat_idx = int(np.argmax(cat_probs[i]))
-            cat_label = self.categories[cat_idx]
-            cat_conf = float(cat_probs[i][cat_idx])
-
-            prio_idx = int(np.argmax(prio_probs[i]))
-            prio_label = self.priorities[prio_idx]
-            prio_conf = float(prio_probs[i][prio_idx])
-
-            results.append(
-                {
-                    "category": cat_label,
-                    "category_confidence": round(cat_conf, 4),
-                    "category_probabilities": {
-                        self.categories[j]: round(float(cat_probs[i][j]), 4)
-                        for j in range(len(self.categories))
-                    },
-                    "priority": prio_label,
-                    "priority_confidence": round(prio_conf, 4),
-                    "priority_probabilities": {
-                        self.priorities[j]: round(float(prio_probs[i][j]), 4)
-                        for j in range(len(self.priorities))
-                    },
-                }
-            )
-        return results
+# --- Pipeline steps -----------------------------------------------------------
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def download_dataset_if_needed(data_path: Path, url: str) -> Path:
-    """Ensure dataset exists locally, downloading from source if not present."""
-    if data_path.exists():
-        logger.info(f"Using existing dataset at: {data_path}")
-        return data_path
+def download_dataset(data_path: Path) -> Path:
+    """Download the dataset if missing, then verify its checksum."""
+    if not data_path.exists():
+        data_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Downloading dataset from %s", DATASET_URL)
+        req = urllib.request.Request(DATASET_URL, headers={"User-Agent": "ticketsense-train"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data_path.write_bytes(resp.read())
 
-    data_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Downloading dataset from: {url}")
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TicketSense-ML"})
-    with urllib.request.urlopen(req) as resp, open(data_path, "wb") as f:
-        f.write(resp.read())
-    logger.info(
-        f"Dataset downloaded successfully ({data_path.stat().st_size / 1024 / 1024:.2f} MB)"
-    )
+    actual = sha256_of(data_path)
+    if actual != DATASET_SHA256:
+        raise RuntimeError(
+            f"Checksum mismatch for {data_path}: expected {DATASET_SHA256}, got {actual}. "
+            "The mirror may have changed; results would not be reproducible."
+        )
+    logger.info("Dataset checksum verified (%s)", data_path)
     return data_path
 
 
-def load_and_preprocess_data(data_path: Path) -> pd.DataFrame:
-    """Load dataset, clean text fields, and extract target labels."""
-    logger.info(f"Reading CSV from {data_path}...")
+def load_data(data_path: Path) -> pd.DataFrame:
+    """Load the CSV, build the text field and the two target labels."""
     df = pd.read_csv(data_path)
-
-    df["title"] = df["title"].fillna("")
-    df["body"] = df["body"].fillna("")
-    df["text"] = (df["title"] + " " + df["body"]).str.strip()
-
-    # Filter out empty or trivially short tickets
+    df["text"] = (df["title"].fillna("") + " " + df["body"].fillna("")).str.strip()
+    # Drop near-empty tickets: there is nothing to learn from them.
     df = df[df["text"].str.len() >= 8].copy()
-
     df["category_label"] = df["category"].apply(map_category)
     df["priority_label"] = df["urgency"].apply(map_priority)
-
-    logger.info(f"Preprocessed {len(df)} total tickets.")
-    logger.info(f"Category distribution:\n{df['category_label'].value_counts().to_dict()}")
-    logger.info(f"Priority distribution:\n{df['priority_label'].value_counts().to_dict()}")
+    logger.info("Loaded %d tickets", len(df))
+    logger.info("Categories: %s", df["category_label"].value_counts().to_dict())
+    logger.info("Priorities: %s", df["priority_label"].value_counts().to_dict())
     return df
 
 
-def train_and_evaluate(
-    df: pd.DataFrame, output_dir: Path
-) -> tuple[TicketClassifierBundle, dict[str, Any]]:
-    """Train TF-IDF + LogisticRegression models and compute evaluation metrics."""
-    X = df["text"].values
-    y_cat = df["category_label"].values
-    y_prio = df["priority_label"].values
+def category_evidence(df: pd.DataFrame, top_n: int = 12) -> dict[str, Any]:
+    """Top TF-IDF terms per raw category code: the evidence behind CATEGORY_NAMES."""
+    vec = TfidfVectorizer(stop_words="english", min_df=5)
+    matrix = vec.fit_transform(df["text"])
+    terms = np.array(vec.get_feature_names_out())
+    evidence = {}
+    for code in sorted(df["category"].unique()):
+        mask = (df["category"] == code).to_numpy()
+        mean_scores = np.asarray(matrix[mask].mean(axis=0)).ravel()
+        evidence[str(code)] = {
+            "mapped_to": map_category(code),
+            "tickets": int(mask.sum()),
+            "top_terms": terms[mean_scores.argsort()[::-1][:top_n]].tolist(),
+        }
+    return evidence
 
-    # Stratified 80/20 train/test split on category
-    X_train, X_test, y_cat_train, y_cat_test, y_prio_train, y_prio_test = train_test_split(
-        X, y_cat, y_prio, test_size=0.20, random_state=42, stratify=y_cat
-    )
 
-    logger.info(f"Training set: {len(X_train)} samples | Test set: {len(X_test)} samples")
+def build_pipeline(max_features: int, c: float) -> Pipeline:
+    """TF-IDF (unigrams + bigrams) followed by class-balanced Logistic Regression.
 
-    # 1. Train Category Pipeline
-    logger.info("Training Category classifier (TF-IDF + LogisticRegression)...")
-    cat_pipe = Pipeline(
+    class_weight="balanced" matters because the data is very imbalanced
+    (one category is ~70% of tickets); without it the model mostly ignores
+    small classes.
+    """
+    return Pipeline(
         [
             (
                 "tfidf",
                 TfidfVectorizer(
                     ngram_range=(1, 2),
-                    max_features=12000,
+                    max_features=max_features,
                     sublinear_tf=True,
                     stop_words="english",
                 ),
@@ -179,184 +182,136 @@ def train_and_evaluate(
             (
                 "clf",
                 LogisticRegression(
-                    max_iter=1000,
-                    class_weight="balanced",
-                    C=1.5,
-                    solver="lbfgs",
-                    random_state=42,
+                    max_iter=2000, class_weight="balanced", C=c, random_state=RANDOM_STATE
                 ),
             ),
         ]
     )
-    cat_pipe.fit(X_train, y_cat_train)
-    y_cat_pred = cat_pipe.predict(X_test)
 
-    cat_report = classification_report(y_cat_test, y_cat_pred, output_dict=True)
-    cat_macro_f1 = f1_score(y_cat_test, y_cat_pred, average="macro")
-    cat_acc = float(np.mean(y_cat_test == y_cat_pred))
-    logger.info(f"Category Test Accuracy: {cat_acc:.4f} | Macro F1: {cat_macro_f1:.4f}")
 
-    # 2. Train Priority Pipeline
-    logger.info("Training Priority classifier (TF-IDF + LogisticRegression)...")
-    prio_pipe = Pipeline(
-        [
-            (
-                "tfidf",
-                TfidfVectorizer(
-                    ngram_range=(1, 2),
-                    max_features=8000,
-                    sublinear_tf=True,
-                    stop_words="english",
-                ),
-            ),
-            (
-                "clf",
-                LogisticRegression(
-                    max_iter=1000,
-                    class_weight="balanced",
-                    C=1.0,
-                    solver="lbfgs",
-                    random_state=42,
-                ),
-            ),
-        ]
+def evaluate(name: str, pipe: Pipeline, x_train, y_train, x_test, y_test) -> tuple[dict, Any]:
+    """Fit on train, score on test, and compare with a majority-class baseline."""
+    pipe.fit(x_train, y_train)
+    y_pred = pipe.predict(x_test)
+
+    baseline = DummyClassifier(strategy="most_frequent").fit(x_train, y_train)
+    y_base = baseline.predict(x_test)
+
+    classes = sorted(np.unique(y_test))
+    report = classification_report(y_test, y_pred, labels=classes, output_dict=True)
+    result = {
+        "algorithm": "TF-IDF (1-2 grams, sublinear tf) + Logistic Regression (balanced)",
+        "accuracy": round(accuracy_score(y_test, y_pred), 4),
+        "macro_f1": round(f1_score(y_test, y_pred, average="macro"), 4),
+        "weighted_f1": round(f1_score(y_test, y_pred, average="weighted"), 4),
+        "baseline_majority_class": {
+            "accuracy": round(accuracy_score(y_test, y_base), 4),
+            "macro_f1": round(f1_score(y_test, y_base, average="macro"), 4),
+        },
+        "classes": classes,
+        "per_class": {
+            cls: {
+                "precision": round(report[cls]["precision"], 4),
+                "recall": round(report[cls]["recall"], 4),
+                "f1_score": round(report[cls]["f1-score"], 4),
+                "support": int(report[cls]["support"]),
+            }
+            for cls in classes
+        },
+    }
+    logger.info(
+        "%s: accuracy=%.4f macro_f1=%.4f (baseline accuracy=%.4f macro_f1=%.4f)",
+        name,
+        result["accuracy"],
+        result["macro_f1"],
+        result["baseline_majority_class"]["accuracy"],
+        result["baseline_majority_class"]["macro_f1"],
     )
-    prio_pipe.fit(X_train, y_prio_train)
-    y_prio_pred = prio_pipe.predict(X_test)
+    return result, y_pred
 
-    prio_report = classification_report(y_prio_test, y_prio_pred, output_dict=True)
-    prio_macro_f1 = f1_score(y_prio_test, y_prio_pred, average="macro")
-    prio_acc = float(np.mean(y_prio_test == y_prio_pred))
-    logger.info(f"Priority Test Accuracy: {prio_acc:.4f} | Macro F1: {prio_macro_f1:.4f}")
 
-    # 3. Build Confusion Matrix Plot for Categories
-    classes = sorted(np.unique(y_cat_test))
-    cm = confusion_matrix(y_cat_test, y_cat_pred, labels=classes)
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(
-        cm,
-        annot=True,
-        fmt="d",
+def save_confusion_matrix(y_true, y_pred, path: Path) -> None:
+    """Row-normalized confusion matrix: each row shows where that class's tickets went."""
+    fig, ax = plt.subplots(figsize=(9, 7))
+    ConfusionMatrixDisplay.from_predictions(
+        y_true,
+        y_pred,
+        normalize="true",
+        values_format=".2f",
         cmap="Blues",
-        xticklabels=classes,
-        yticklabels=classes,
+        ax=ax,
+        xticks_rotation=35,
     )
-    plt.title("TicketSense: Category Classification Confusion Matrix (Test Set)")
-    plt.xlabel("Predicted Category")
-    plt.ylabel("Actual Category")
-    plt.tight_layout()
-
-    cm_path = output_dir / "confusion_matrix.png"
-    plt.savefig(cm_path, dpi=300)
-    plt.close()
-    logger.info(f"Saved confusion matrix plot to: {cm_path}")
-
-    # 4. Compile Metrics JSON
-    metrics = {
-        "dataset": {
-            "name": "Public IT Helpdesk Support Dataset",
-            "license": "MIT License",
-            "source": DEFAULT_DATASET_URL,
-            "total_samples": int(len(df)),
-            "train_samples": int(len(X_train)),
-            "test_samples": int(len(X_test)),
-        },
-        "category_model": {
-            "algorithm": "TF-IDF (1-2 ngrams, sublinear_tf) + Multinomial Logistic Regression (balanced)",
-            "accuracy": round(cat_acc, 4),
-            "macro_f1": round(cat_macro_f1, 4),
-            "weighted_f1": round(float(cat_report["weighted avg"]["f1-score"]), 4),
-            "classes": classes,
-            "per_class": {
-                cls: {
-                    "precision": round(float(cat_report[cls]["precision"]), 4),
-                    "recall": round(float(cat_report[cls]["recall"]), 4),
-                    "f1_score": round(float(cat_report[cls]["f1-score"]), 4),
-                    "support": int(cat_report[cls]["support"]),
-                }
-                for cls in classes
-            },
-        },
-        "priority_model": {
-            "algorithm": "TF-IDF + Multinomial Logistic Regression (balanced)",
-            "accuracy": round(prio_acc, 4),
-            "macro_f1": round(prio_macro_f1, 4),
-            "weighted_f1": round(float(prio_report["weighted avg"]["f1-score"]), 4),
-            "classes": sorted(np.unique(y_prio_test)),
-            "per_class": {
-                cls: {
-                    "precision": round(float(prio_report[cls]["precision"]), 4),
-                    "recall": round(float(prio_report[cls]["recall"]), 4),
-                    "f1_score": round(float(prio_report[cls]["f1-score"]), 4),
-                    "support": int(prio_report[cls]["support"]),
-                }
-                for cls in sorted(np.unique(y_prio_test))
-            },
-        },
-    }
-
-    metrics_path = output_dir / "metrics.json"
-    with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-    logger.info(f"Saved metrics JSON to: {metrics_path}")
-
-    bundle = {
-        "category_pipeline": cat_pipe,
-        "priority_pipeline": prio_pipe,
-        "categories": classes,
-        "priorities": sorted(np.unique(y_prio_test)),
-    }
-    return bundle, metrics
+    ax.set_title("Category model - confusion matrix (test set, row-normalized)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train TicketSense NLP Models")
-    parser.add_argument(
-        "--data-path",
-        type=Path,
-        default=Path("data/all_tickets.csv"),
-        help="Path to local or cached CSV dataset",
-    )
-    parser.add_argument(
-        "--url",
-        type=str,
-        default=DEFAULT_DATASET_URL,
-        help="URL to download raw dataset if not present locally",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("ml"),
-        help="Directory where metrics and confusion matrix are saved",
-    )
-    parser.add_argument(
-        "--artifact-dir",
-        type=Path,
-        default=Path("backend/app/ml/artifacts"),
-        help="Directory where serialized model artifact is saved",
-    )
+    parser = argparse.ArgumentParser(description="Train the TicketSense models")
+    parser.add_argument("--data-path", type=Path, default=Path("data/all_tickets.csv"))
+    parser.add_argument("--output-dir", type=Path, default=Path("ml"))
+    parser.add_argument("--artifact-dir", type=Path, default=Path("backend/app/ml/artifacts"))
     args = parser.parse_args()
-
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    data_file = download_dataset_if_needed(args.data_path, args.url)
-    df = load_and_preprocess_data(data_file)
-    bundle, metrics = train_and_evaluate(df, args.output_dir)
+    df = load_data(download_dataset(args.data_path))
 
-    # Save model artifact bundle
-    model_path = args.artifact_dir / "ticket_classifier.joblib"
-    joblib.dump(bundle, model_path, compress=3)
-    logger.info(
-        f"Saved model artifact to: {model_path} ({model_path.stat().st_size / 1024 / 1024:.2f} MB)"
+    # One split shared by both models, stratified on category so small classes
+    # appear in the test set in the same proportion as in training.
+    x_train, x_test, yc_train, yc_test, yp_train, yp_test = train_test_split(
+        df["text"].to_numpy(),
+        df["category_label"].to_numpy(),
+        df["priority_label"].to_numpy(),
+        test_size=0.20,
+        random_state=RANDOM_STATE,
+        stratify=df["category_label"],
     )
 
-    # Copy metrics and confusion matrix into backend artifacts directory for API serving
-    with open(args.artifact_dir / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
+    cat_pipe = build_pipeline(max_features=20000, c=2.0)
+    prio_pipe = build_pipeline(max_features=20000, c=1.0)
+    cat_metrics, yc_pred = evaluate("category", cat_pipe, x_train, yc_train, x_test, yc_test)
+    prio_metrics, _ = evaluate("priority", prio_pipe, x_train, yp_train, x_test, yp_test)
 
-    logger.info("Training pipeline complete!")
+    save_confusion_matrix(yc_test, yc_pred, args.output_dir / "confusion_matrix.png")
+
+    metrics = {
+        "dataset": {
+            "name": "Endava IT support tickets (anonymized)",
+            "original_source": ORIGINAL_SOURCE,
+            "original_license": "MIT (license of the publishing repository)",
+            "download_url": DATASET_URL,
+            "sha256": DATASET_SHA256,
+            "total_samples": int(len(df)),
+            "train_samples": int(len(x_train)),
+            "test_samples": int(len(x_test)),
+            "label_note": "Category names are our interpretation of anonymized codes; "
+            "see ml/category_evidence.json.",
+        },
+        "scikit_learn_version": sklearn.__version__,
+        "random_state": RANDOM_STATE,
+        "category_model": cat_metrics,
+        "priority_model": prio_metrics,
+    }
+
+    for path in (args.output_dir / "metrics.json", args.artifact_dir / "metrics.json"):
+        path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    (args.output_dir / "category_evidence.json").write_text(
+        json.dumps(category_evidence(df), indent=2) + "\n", encoding="utf-8"
+    )
+
+    # The API loads this dict; the sklearn version is checked at load time
+    # because pickled models are only reliable on the same version.
+    bundle = {
+        "category_pipeline": cat_pipe,
+        "priority_pipeline": prio_pipe,
+        "sklearn_version": sklearn.__version__,
+    }
+    model_path = args.artifact_dir / "ticket_classifier.joblib"
+    joblib.dump(bundle, model_path, compress=3)
+    logger.info("Saved model to %s (%.2f MB)", model_path, model_path.stat().st_size / 1e6)
 
 
 if __name__ == "__main__":

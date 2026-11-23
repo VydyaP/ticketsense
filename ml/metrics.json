@@ -1,69 +1,89 @@
 {
   "dataset": {
-    "name": "Public IT Helpdesk Support Dataset",
-    "license": "MIT License",
-    "source": "https://raw.githubusercontent.com/vanessaaleung/support-ticket-nlp/master/all_tickets.csv",
+    "name": "Endava IT support tickets (anonymized)",
+    "original_source": "https://github.com/karolzak/support-tickets-classification",
+    "original_license": "MIT (license of the publishing repository)",
+    "download_url": "https://raw.githubusercontent.com/vanessaaleung/support-ticket-nlp/master/all_tickets.csv",
+    "sha256": "26ef6f2e5c800371b4d7505070a71e15535c3a7b57c3ac0deb8a4ff8823c64c8",
     "total_samples": 48545,
     "train_samples": 38836,
-    "test_samples": 9709
+    "test_samples": 9709,
+    "label_note": "Category names are our interpretation of anonymized codes; see ml/category_evidence.json."
   },
+  "scikit_learn_version": "1.9.1",
+  "random_state": 42,
   "category_model": {
-    "algorithm": "TF-IDF (1-2 ngrams, sublinear_tf) + Multinomial Logistic Regression (balanced)",
-    "accuracy": 0.8397,
-    "macro_f1": 0.6519,
-    "weighted_f1": 0.8514,
+    "algorithm": "TF-IDF (1-2 grams, sublinear tf) + Logistic Regression (balanced)",
+    "accuracy": 0.8487,
+    "macro_f1": 0.6306,
+    "weighted_f1": 0.8588,
+    "baseline_majority_class": {
+      "accuracy": 0.7015,
+      "macro_f1": 0.1178
+    },
     "classes": [
-      "Access/Account",
-      "Facilities",
-      "Hardware",
-      "Network",
+      "Accounts & Applications",
+      "Hardware & Equipment",
+      "Infrastructure & Servers",
+      "Monitoring Alerts",
       "Other",
-      "Software"
+      "Physical Access & Badges",
+      "Procurement & Quotes"
     ],
     "per_class": {
-      "Access/Account": {
-        "precision": 0.957,
-        "recall": 0.8657,
-        "f1_score": 0.909,
+      "Accounts & Applications": {
+        "precision": 0.9553,
+        "recall": 0.8749,
+        "f1_score": 0.9133,
         "support": 6811
       },
-      "Facilities": {
-        "precision": 0.5489,
-        "recall": 0.7935,
-        "f1_score": 0.6489,
-        "support": 184
+      "Hardware & Equipment": {
+        "precision": 0.79,
+        "recall": 0.8105,
+        "f1_score": 0.8001,
+        "support": 1926
       },
-      "Hardware": {
-        "precision": 0.7918,
-        "recall": 0.8111,
-        "f1_score": 0.8013,
-        "support": 1927
-      },
-      "Network": {
-        "precision": 0.408,
-        "recall": 0.7376,
-        "f1_score": 0.5254,
+      "Infrastructure & Servers": {
+        "precision": 0.4132,
+        "recall": 0.7281,
+        "f1_score": 0.5272,
         "support": 526
       },
-      "Other": {
-        "precision": 0.4822,
-        "recall": 0.6419,
-        "f1_score": 0.5507,
-        "support": 148
+      "Monitoring Alerts": {
+        "precision": 0.7255,
+        "recall": 0.7708,
+        "f1_score": 0.7475,
+        "support": 48
       },
-      "Software": {
-        "precision": 0.4062,
-        "recall": 0.5752,
-        "f1_score": 0.4762,
-        "support": 113
+      "Other": {
+        "precision": 0.2289,
+        "recall": 0.3585,
+        "f1_score": 0.2794,
+        "support": 53
+      },
+      "Physical Access & Badges": {
+        "precision": 0.6812,
+        "recall": 0.8632,
+        "f1_score": 0.7615,
+        "support": 307
+      },
+      "Procurement & Quotes": {
+        "precision": 0.3556,
+        "recall": 0.4211,
+        "f1_score": 0.3855,
+        "support": 38
       }
     }
   },
   "priority_model": {
-    "algorithm": "TF-IDF + Multinomial Logistic Regression (balanced)",
-    "accuracy": 0.8815,
-    "macro_f1": 0.7432,
-    "weighted_f1": 0.883,
+    "algorithm": "TF-IDF (1-2 grams, sublinear tf) + Logistic Regression (balanced)",
+    "accuracy": 0.8832,
+    "macro_f1": 0.7469,
+    "weighted_f1": 0.8842,
+    "baseline_majority_class": {
+      "accuracy": 0.7098,
+      "macro_f1": 0.2767
+    },
     "classes": [
       "High",
       "Low",
@@ -71,22 +91,22 @@
     ],
     "per_class": {
       "High": {
-        "precision": 0.7146,
-        "recall": 0.6794,
-        "f1_score": 0.6966,
-        "support": 1703
+        "precision": 0.7131,
+        "recall": 0.695,
+        "f1_score": 0.7039,
+        "support": 1695
       },
       "Low": {
-        "precision": 0.9858,
+        "precision": 0.9845,
         "recall": 0.9801,
-        "f1_score": 0.983,
-        "support": 6890
+        "f1_score": 0.9823,
+        "support": 6891
       },
       "Medium": {
-        "precision": 0.5226,
-        "recall": 0.5806,
-        "f1_score": 0.5501,
-        "support": 1116
+        "precision": 0.5372,
+        "recall": 0.5726,
+        "f1_score": 0.5543,
+        "support": 1123
       }
     }
   }

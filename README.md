@@ -1,229 +1,201 @@
-# TicketSense 🎫
+# TicketSense
 
-[![CI/CD Pipeline](https://github.com/VydyaP/ticketsense/actions/workflows/ci.yml/badge.svg)](https://github.com/VydyaP/ticketsense/actions/workflows/ci.yml)
+[![CI](https://github.com/VydyaP/ticketsense/actions/workflows/ci.yml/badge.svg)](https://github.com/VydyaP/ticketsense/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18.2-61dafb.svg)](https://react.dev/)
-[![Docker](https://img.shields.io/badge/Docker-Enabled-2496ed.svg)](https://www.docker.com/)
 
-> **An enterprise IT help-desk ticketing platform featuring real-time NLP classification, human-in-the-loop feedback correction, PostgreSQL persistence, Prometheus observability, and automated CI/CD.**
+**An IT help-desk app that reads each new support ticket and predicts its category and priority with a machine-learning model served by a FastAPI backend.**
 
----
+**Live demo:** _coming soon_ · **API docs:** _coming soon_ · **Health:** _coming soon_
 
-## ⚡ 30-Second Overview
+![Dashboard](docs/screenshots/dashboard.png)
 
-TicketSense bridges the gap between machine learning models and enterprise software workflows. When an employee or customer submits a technical issue, TicketSense instantaneously classifies the ticket into functional departments (**Access/Account**, **Hardware**, **Network**, **Software**, **Facilities**, **Other**) and predicts operational urgency (**High**, **Medium**, **Low**) with calibrated confidence scores.
+## Features
 
-Helpdesk agents can update ticket lifecycle statuses and correct mispredicted categories; every human correction is tracked as labeled feedback data for model retraining.
+- **Submit a ticket** → the API predicts **category** (7 classes) and **priority** (High / Medium / Low) with confidence scores, and stores both in PostgreSQL.
+- **Live preview**: the form shows the prediction while you type (`POST /api/predict`, nothing saved).
+- **Ticket queue**: search, filter by status / category / priority, paginate, update status.
+- **Human feedback**: agents correct a wrong category; the correction is stored next to the original prediction as labelled data for retraining.
+- **Dashboard**: counts by category, priority and status, plus the model's real test-set metrics.
+- **Monitoring**: `/health` (DB + model readiness), `/metrics` (Prometheus), JSON logs with a request ID on every line.
+- **Engineering**: 17 backend tests against real PostgreSQL, 6 frontend tests, lint + format checks, Docker, CI on every push.
+
+![Ticket queue](docs/screenshots/tickets.png)
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    User([User / Agent]) -->|Submit Ticket / View Queue| WebApp[React + TypeScript Frontend]
-    WebApp -->|REST API Requests| FastAPIServer[FastAPI Backend]
-    FastAPIServer -->|Real-Time Inference <5ms| MLModel[Scikit-Learn NLP Engine]
-    FastAPIServer -->|Async I/O| Postgres[(PostgreSQL 16)]
-    FastAPIServer -->|Structured Logs| Logger[JSON Request Logger]
-    FastAPIServer -->|Expose Telemetry| Prom[Prometheus /metrics]
+    U([Browser]) -->|HTTPS| FE["React + TypeScript SPA<br/>(Vercel)"]
+    FE -->|REST / JSON| API["FastAPI backend<br/>(Docker on Render)"]
+    API -->|predict| ML["scikit-learn model<br/>TF-IDF + Logistic Regression<br/>(loaded in memory)"]
+    API -->|SQLAlchemy async| DB[("PostgreSQL<br/>(Neon)")]
+    API -.->|/metrics| P[Prometheus scraper]
+    API -.->|JSON logs + request ID| L[Log viewer]
+    T["ml/train.py"] -->|joblib artifact + metrics.json| ML
 ```
 
----
+On startup the container runs `alembic upgrade head` and only then starts the API (a failed migration stops the deploy). Details and trade-offs are in [docs/DESIGN.md](docs/DESIGN.md).
 
-## 🏗️ Architecture & Technology Stack
+## Tech stack
 
-| Layer | Technologies | Key Architectural Decisions |
-| :--- | :--- | :--- |
-| **Backend** | Python 3.11, FastAPI, Pydantic v2, Uvicorn | Async ASGI server, auto-generated Swagger OpenAPI docs at `/docs`, strict schema validation |
-| **Database** | PostgreSQL 16, SQLAlchemy 2.0 Async, Alembic | Non-blocking `asyncpg` driver, version-controlled schema migrations, indexed query lookups |
-| **Machine Learning** | Scikit-Learn, Pandas, Joblib | TF-IDF (unigrams + bigrams, sublinear TF) + Multinomial Logistic Regression with balanced class weighting |
-| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS | Single-page application, real-time triage preview, debounce optimization, accessible modal controls |
-| **Monitoring** | Prometheus Client, Structured JSON Logger | `GET /health` connectivity probes, `GET /metrics` counters and latency histograms, UUID `X-Request-ID` tracing |
-| **DevOps & CI/CD** | GitHub Actions, Docker, Docker Compose | Multi-container local orchestration, automated linting (`ruff`, `eslint`), PostgreSQL service testing |
+| Layer | Tools |
+| --- | --- |
+| Backend | Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2 (async, asyncpg), Alembic |
+| Database | PostgreSQL 16 (Neon in production) |
+| ML | scikit-learn, pandas, joblib |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Tests & quality | pytest, Vitest + Testing Library, ruff, ESLint, Prettier, pre-commit (incl. gitleaks) |
+| Ops | Docker, docker compose, GitHub Actions, Prometheus client, structured JSON logging |
+| Hosting | Render (API), Neon (Postgres), Vercel (frontend) |
 
----
+## Model results
 
-## 📊 Real Machine Learning Benchmark Results
+Every number below comes from `python ml/train.py` and is stored in [`ml/metrics.json`](ml/metrics.json). Test set: **9,709 tickets** (a stratified 20% hold-out of 48,545; seed 42).
 
-Trained reproducibly via `ml/train.py` on a held-out 20% test split (**9,709 tickets**) from a public, MIT-licensed dataset of **48,545 enterprise IT support tickets**. All figures below are extracted directly from [`ml/metrics.json`](ml/metrics.json):
+| Model | Accuracy | Macro F1 | Weighted F1 | Majority-class baseline (acc / macro F1) |
+| --- | --- | --- | --- | --- |
+| Category (7 classes) | **84.9%** | **0.631** | 0.859 | 70.2% / 0.118 |
+| Priority (3 classes) | **88.3%** | **0.747** | 0.884 | 71.0% / 0.277 |
 
-### Summary Metrics
+Category model, per class (test set):
 
-| Target Dimension | Model Architecture | Test Accuracy | Macro F1 | Weighted F1 |
-| :--- | :--- | :--- | :--- | :--- |
-| **Category Classification** | TF-IDF (12k features) + Logistic Regression | **84.0%** (`0.8397`) | **0.652** (`0.6519`) | **0.851** (`0.8514`) |
-| **Priority Triage** | TF-IDF (8k features) + Logistic Regression | **88.2%** (`0.8815`) | **0.743** (`0.7432`) | **0.883** (`0.8830`) |
+| Category | Precision | Recall | F1 | Test tickets |
+| --- | --- | --- | --- | --- |
+| Accounts & Applications | 0.955 | 0.875 | 0.913 | 6,811 |
+| Hardware & Equipment | 0.790 | 0.811 | 0.800 | 1,926 |
+| Physical Access & Badges | 0.681 | 0.863 | 0.762 | 307 |
+| Monitoring Alerts | 0.726 | 0.771 | 0.748 | 48 |
+| Infrastructure & Servers | 0.413 | 0.728 | 0.527 | 526 |
+| Procurement & Quotes | 0.356 | 0.421 | 0.386 | 38 |
+| Other | 0.229 | 0.359 | 0.279 | 53 |
 
-### Per-Category Performance Breakdown
+**How to read this:** accuracy looks high partly because one class is 70% of the data, which is why macro F1 (every class weighted equally) is the headline number. The model is strong on large, distinctive classes and weak on small ones. "Procurement & Quotes" is often predicted as "Hardware & Equipment", because purchase requests for equipment appear in both. See the [confusion matrix](ml/confusion_matrix.png).
 
-| Class | Precision | Recall | F1-Score | Test Set Support |
-| :--- | :--- | :--- | :--- | :--- |
-| **Access/Account** | 95.7% | 86.6% | **0.909** | 6,811 |
-| **Hardware** | 79.2% | 81.1% | **0.801** | 1,927 |
-| **Network** | 40.8% | 73.8% | **0.525** | 526 |
-| **Facilities** | 54.9% | 79.4% | **0.649** | 184 |
-| **Software** | 40.6% | 57.5% | **0.476** | 113 |
-| **Other** | 48.2% | 64.2% | **0.551** | 148 |
+Inference speed (measured on an Apple M3): `model.predict` p50 **0.5 ms**; `POST /api/predict` through the Docker container p50 **1.7 ms**, p95 2.4 ms (localhost, 300 requests).
 
-> **Key Machine Learning Takeaway:** By utilizing balanced class weights, the classifier maintains high recall across minority categories (such as critical network outages and facility badge issues) ensuring urgent incidents are never ignored in queue backlogs.
+## Data
 
----
+- **Dataset:** Endava IT support tickets: 48,549 real help-desk emails, released in anonymized form by Microsoft and Endava in [karolzak/support-tickets-classification](https://github.com/karolzak/support-tickets-classification) (MIT license).
+- **Download:** the official link in that repo expired in 2022. `ml/train.py` downloads an identical public mirror ([vanessaaleung/support-ticket-nlp](https://github.com/vanessaaleung/support-ticket-nlp)) and **verifies its SHA-256 checksum**, so every run uses exactly the same file. The raw CSV is not committed.
+- **Preprocessing:** title and body joined; tickets shorter than 8 characters dropped (4 removed → 48,545).
 
-## 🚀 Quickstart & Local Setup
+### Important: the category names are my interpretation
 
-### Option 1: Docker Compose (Recommended)
+The published data is anonymized: `category` is just an integer from 0 to 12, and the original names were never released. I named the codes by reading sample tickets and the top TF-IDF terms of each code. Codes with mixed content or too few examples were grouped as **Other**. The evidence is regenerated on every training run in [`ml/category_evidence.json`](ml/category_evidence.json):
 
-Run the entire stack (PostgreSQL + FastAPI + React) with a single command:
+| Code | Tickets | Top terms | Mapped to |
+| --- | --- | --- | --- |
+| 4 | 34,058 | access, error, (generic email words) | Accounts & Applications* |
+| 5 | 9,633 | po, purchase, monitor, laptop | Hardware & Equipment |
+| 6 | 2,628 | server, engineer, access, connection | Infrastructure & Servers |
+| 7 | 921 | card, access, starter, enabling, area | Physical Access & Badges |
+| 11 | 612 | card, lost, access, badge, door | Physical Access & Badges |
+| 8 | 239 | alert, critical, tape, recovery | Monitoring Alerts |
+| 9 | 191 | purchase, quote, equipment, request | Procurement & Quotes |
+| 0, 1, 2, 3, 10, 12 | 263 | mixed (passwords, PC swaps, capacity reports) | Other |
+
+\*Code 4 is the largest and most generic class; its name comes from reading samples (access requests, password and application issues, joiners/leavers).
+
+**Priority** comes from the anonymized `urgency` field (0–3), mapped to 0–1 → High, 2 → Medium, 3 → Low. This assumes lower code = more urgent (the usual ITIL convention). Supporting evidence: code 3 holds 71% of tickets, and words like "urgent/asap/critical" are about twice as frequent in codes 0–2. It is still an assumption, not documented ground truth.
+
+## Run locally
+
+Requirements: Docker Desktop.
 
 ```bash
-# Clone the repository
 git clone https://github.com/VydyaP/ticketsense.git
 cd ticketsense
-
-# Start all containers
 docker compose up --build
 ```
 
-- **Frontend Application:** [http://localhost:5173](http://localhost:5173)
-- **FastAPI Interactive Docs (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health Check Probe:** [http://localhost:8000/health](http://localhost:8000/health)
-- **Prometheus Metrics:** [http://localhost:8000/metrics](http://localhost:8000/metrics)
+- App: http://localhost:5173
+- API docs (Swagger): http://localhost:8000/docs
+- Health: http://localhost:8000/health · Metrics: http://localhost:8000/metrics
 
----
-
-### Option 2: Local Development Setup
-
-#### 1. Backend Setup
+<details>
+<summary>Without Docker for the API (faster reloads)</summary>
 
 ```bash
-# Create and activate Python virtual environment
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -r backend/requirements.txt
-
-# (Optional) Retrain or evaluate ML model
-python ml/train.py
-
-# Run database migrations
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r backend/requirements-dev.txt
+cp .env.example .env               # Windows: copy .env.example .env
+docker compose up -d postgres      # or any local PostgreSQL
 alembic upgrade head
+uvicorn backend.app.main:app --reload
 
-# Start FastAPI development server
-uvicorn backend.app.main:app --reload --port 8000
+cd frontend && npm install && npm run dev   # proxies /api to :8000
 ```
+</details>
 
-#### 2. Frontend Setup
+### Retrain the model
 
 ```bash
+python ml/train.py   # downloads + verifies data, trains, writes metrics.json, confusion matrix, artifact
+```
+
+## Tests
+
+```bash
+# Backend: needs a throwaway Postgres (tests drop and recreate its tables)
+docker run -d --name ticketsense-testdb -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=ticketsense_test -p 5432:5432 postgres:16-alpine
+pytest                       # runs Alembic migrations, then API + model tests
+ruff check . && ruff format --check .
+
+# Frontend
 cd frontend
-
-# Install Node modules
-npm install
-
-# Start Vite development server
-npm run dev
+npm test && npm run lint && npm run format:check && npm run build
 ```
 
----
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every push and pull request, with Postgres as a service container. It then builds the Docker image and smoke-tests it: the container must migrate a fresh database and return a healthy `/health`.
 
-## 🧪 Automated Testing
+## API
 
-### Backend Tests (pytest)
-Runs unit tests for the ML service wrapper, input validation, and full async API integration tests:
+| Method | Path | Purpose | Codes |
+| --- | --- | --- | --- |
+| POST | `/api/tickets` | Create ticket + predict + save | 201, 422, 503 |
+| GET | `/api/tickets` | List; filters `status`, `category`, `priority`, `search`; `page`, `page_size` | 200, 422 |
+| GET | `/api/tickets/{id}` | One ticket incl. full probability distribution | 200, 404 |
+| PATCH | `/api/tickets/{id}` | Update `status` and/or `corrected_category` (must be a known category) | 200, 404, 422 |
+| POST | `/api/predict` | Predict without saving | 200, 422, 503 |
+| GET | `/api/stats` | Counts by status, category, priority; corrections | 200 |
+| GET | `/api/model/metrics` | Test-set metrics from training | 200, 503 |
+| GET | `/health` | DB connectivity + model loaded | 200, 503 |
+| GET | `/metrics` | Prometheus: request count & latency by route, predictions by category | 200 |
 
-```bash
-# From repository root
-pytest -v
-```
+Full interactive docs at `/docs`.
 
-### Frontend Tests (Vitest)
-Runs React Testing Library component tests validating form triage previews, template buttons, and dashboard metrics:
-
-```bash
-cd frontend
-npm test
-```
-
-### Linting & Code Quality
-```bash
-# Python linting and format verification
-ruff check .
-ruff format --check .
-
-# Frontend TypeScript & ESLint verification
-cd frontend
-npm run lint
-npm run build
-```
-
----
-
-## 🔌 API Specification Overview
-
-| Method | Endpoint | Description | Status Codes |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/tickets` | Create ticket, run ML triage prediction, persist in DB | `201 Created`, `422 Unprocessable` |
-| `GET` | `/api/tickets` | Query paginated tickets with status, category, priority filters | `200 OK` |
-| `GET` | `/api/tickets/{id}` | Retrieve details and probability distribution for a ticket | `200 OK`, `404 Not Found` |
-| `PATCH` | `/api/tickets/{id}` | Update workflow status or provide category feedback | `200 OK`, `404 Not Found` |
-| `POST` | `/api/predict` | Real-time prediction preview without database persistence | `200 OK`, `422 Unprocessable` |
-| `GET` | `/api/stats` | Aggregated ticket counts and human correction accuracy | `200 OK` |
-| `GET` | `/api/model/metrics` | Returns real training benchmarks and per-class reports | `200 OK` |
-| `GET` | `/health` | Liveness/readiness probe (checks DB connectivity & model) | `200 OK`, `503 Service Unavailable` |
-| `GET` | `/metrics` | Prometheus exposition endpoint for requests, latency, errors | `200 OK` |
-
----
-
-## 📁 Repository Structure
+## Project structure
 
 ```
 ticketsense/
-├── .github/workflows/ci.yml       # GitHub Actions: Lint, test with Postgres, build Docker
 ├── backend/
 │   ├── app/
-│   │   ├── api/                   # REST API routers (tickets, predict, stats, health)
-│   │   ├── core/                  # Database config, JSON logging, Prometheus metrics
-│   │   ├── ml/                    # Scikit-learn model loading service & artifacts
-│   │   ├── models/                # SQLAlchemy 2.0 Ticket model
-│   │   ├── schemas/               # Pydantic v2 validation schemas
-│   │   ├── services/              # Ticket business logic & metric tracking
-│   │   └── main.py                # FastAPI app initialization & middleware
-│   ├── migrations/                # Alembic migration scripts
-│   ├── tests/                     # Pytest suite (API, ML service, health check)
-│   ├── Dockerfile                 # Production backend container definition
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/            # TicketForm, TicketList, Modal, Dashboard, Navbar
-│   │   ├── services/api.ts        # Typed fetch client
-│   │   ├── types/ticket.ts        # TypeScript data contracts
-│   │   ├── tests/                 # Vitest component test suite
-│   │   └── App.tsx
-│   ├── package.json
-│   └── vite.config.ts
-├── ml/
-│   ├── train.py                   # Reproducible model training script
-│   ├── metrics.json               # Genuine test set evaluation benchmarks
-│   └── confusion_matrix.png       # Category confusion matrix visualization
-├── docs/
-│   └── DESIGN.md                  # In-depth architectural trade-offs and data flow
-├── docker-compose.yml             # Local multi-service orchestrator
-├── .env.example                   # Documented configuration template
-├── LICENSE                        # MIT License
-└── pyproject.toml                 # Ruff & Pytest configuration
+│   │   ├── api/          # routers: tickets, predict, stats, health/metrics
+│   │   ├── core/         # config (env vars), database, JSON logging, Prometheus
+│   │   ├── ml/           # model loading + prediction; artifacts/ holds the trained model
+│   │   ├── models/       # SQLAlchemy Ticket table
+│   │   ├── schemas/      # Pydantic request/response models (validation)
+│   │   ├── services/     # ticket business logic and stats queries
+│   │   └── main.py       # app, middleware, error handlers
+│   ├── migrations/       # Alembic
+│   ├── tests/            # pytest (real Postgres)
+│   ├── Dockerfile
+│   └── entrypoint.sh     # migrate, then start uvicorn
+├── frontend/src/         # components, hooks, typed API client, Vitest tests
+├── ml/                   # train.py, metrics.json, confusion_matrix.png, category_evidence.json
+├── docs/                 # DESIGN.md, screenshots
+├── docker-compose.yml
+└── .github/workflows/ci.yml
 ```
 
----
+## What I would improve next
 
-## 🔮 What I Would Improve Next
+1. **Retrain from feedback:** export human corrections from the database, add them to the training set, and retrain only if macro F1 on the fixed test set improves (with the old model kept for rollback).
+2. **Better small-class performance:** try sentence embeddings (e.g. a small MiniLM model) + Logistic Regression and compare macro F1 against the latency and memory cost, since "Other" and "Procurement" are the weak spots.
+3. **Production hardening:** authentication with agent vs. requester roles, rate limiting on `/api/predict`, and alerting on `/health` and error-rate metrics.
 
-1. **Active Retraining Queue:** Create an asynchronous Celery/Redis queue that triggers incremental model fine-tuning once 500+ human corrections are recorded in the feedback loop.
-2. **Transformer Comparison:** Benchmark lightweight distilled transformers (such as `MiniLM` or `DistilBERT`) against the current TF-IDF Logistic Regression pipeline to measure the accuracy vs. latency trade-off.
-3. **Automated SLA Breach Forecasting:** Train an auxiliary regression model on ticket resolution duration to predict the risk of Service Level Agreement (SLA) breaches at creation time.
+## License
 
----
-
-## 📄 License & Attribution
-
-This project is open-source under the [MIT License](LICENSE).  
-The training dataset is sourced from a public IT helpdesk research dataset released under the MIT License.
+Code: [MIT](LICENSE). Dataset: see [Data](#data) above.

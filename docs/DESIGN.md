@@ -1,103 +1,92 @@
-# TicketSense — System Design & Architecture Document
+# TicketSense: design notes
 
-## 1. System Goals & Requirements
+## 1. Components
 
-### 1.1 Functional Goals
-- **Automated Triage:** Ingest unstructured support ticket requests (subject line + issue description) and automatically predict the functional category and urgency level.
-- **Predictive Confidence:** Quantify model certainty via calibrated probability distributions to enable triage thresholding.
-- **Auditable Ticket Management:** Support complete ticket lifecycle management (`open`, `in_progress`, `resolved`, `closed`) with query filtering, full-text search, and pagination.
-- **Human-in-the-Loop Feedback:** Allow support engineers to correct misclassified tickets. Preserve both `predicted_category` and `corrected_category` to create high-quality retraining datasets.
-- **Observability:** Provide standard monitoring endpoints (`/health`, `/metrics` in Prometheus format) and structured JSON logging with request tracing.
+| Component | Where it runs | Responsibility |
+| --- | --- | --- |
+| React SPA (`frontend/`) | Vercel (static files) | Forms, ticket queue, dashboard. Talks to the API over JSON; never touches the DB. |
+| FastAPI app (`backend/app/`) | Docker container on Render | Validation, business logic, prediction, persistence, monitoring endpoints. |
+| Model artifact (`backend/app/ml/artifacts/`) | Inside the API process | Two scikit-learn pipelines loaded once at startup with joblib. |
+| PostgreSQL | Neon (serverless Postgres) | Tickets, predictions, probabilities, human corrections. |
+| Training script (`ml/train.py`) | Developer machine | Produces the artifact, `metrics.json`, confusion matrix and label evidence. |
 
-### 1.2 Non-Functional Goals
-- **Low Latency:** Inference must execute within <10ms to provide instantaneous live preview while users type their ticket description.
-- **Resource Efficiency:** The entire backend and ML model footprint must run comfortably on resource-constrained free-tier cloud containers (<512MB RAM).
-- **Stateless & Scalable:** The FastAPI backend is completely stateless; all application state resides in PostgreSQL.
+### Backend layers
 
----
-
-## 2. Architecture & Data Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant Frontend as React / Vite UI
-    participant Backend as FastAPI Server
-    participant Model as Scikit-Learn Engine
-    participant DB as PostgreSQL
-    participant Prom as Prometheus Metrics
-
-    User->>Frontend: Types ticket title & description
-    Frontend->>Backend: POST /api/predict (Debounced)
-    Backend->>Model: Vectorize text & predict_proba()
-    Model-->>Backend: Category, Priority, Confidences
-    Backend-->>Frontend: Real-time triage prediction preview
-
-    User->>Frontend: Clicks "Submit Ticket"
-    Frontend->>Backend: POST /api/tickets
-    Backend->>Model: Compute final predictions
-    Backend->>DB: INSERT INTO tickets (status='open')
-    Backend->>Prom: Increment ticketsense_ticket_predictions_total
-    Backend-->>Frontend: 201 Created (TicketResponse)
-
-    actor Agent as Helpdesk Agent
-    Agent->>Frontend: Reviews ticket & changes category
-    Frontend->>Backend: PATCH /api/tickets/{id} (corrected_category='Network')
-    Backend->>DB: UPDATE tickets SET corrected_category='Network'
-    Backend->>Prom: Increment ticketsense_ticket_corrections_total
-    Backend-->>Frontend: 200 OK (Updated Ticket)
+```
+api/        HTTP only: parse/validate input, map errors to status codes
+services/   business logic: predict -> save, filters, stats queries
+ml/         model loading and prediction, no web or DB code
+models/     SQLAlchemy table definition
+schemas/    Pydantic request/response models (the API contract)
+core/       config from env vars, DB engine, logging, metrics
 ```
 
----
+Each layer can be tested on its own: the model wrapper has unit tests without a DB or HTTP; the API tests exercise everything together.
 
-## 3. Key Design Decisions & Trade-offs
+## 2. Request flow: creating a ticket
 
-### 3.1 ML Architecture: TF-IDF + Logistic Regression vs. Deep Transformers
-- **Decision:** Use TF-IDF vectorization (unigrams + bigrams, sublinear TF scaling, max 12k features) paired with Multinomial Logistic Regression (`class_weight='balanced'`).
-- **Trade-off Analysis:**
-  - *Large Language Models (LLMs / BERT):* Higher semantic comprehension, but introduces 300MB–2GB model weights, 150ms–2000ms inference latency, GPU requirements, or external API costs.
-  - *TF-IDF + Logistic Regression:* 0.92 MB serialized artifact, sub-3ms CPU inference latency, zero third-party dependencies, and highly interpretable feature coefficients. On the 48,545 ticket dataset, it achieved **84.0% category accuracy** and **88.2% priority accuracy**, easily satisfying operational requirements.
+1. Browser sends `POST /api/tickets {title, description}`.
+2. Middleware assigns a request ID (or reuses `X-Request-ID`), starts a latency timer.
+3. Pydantic validates lengths and required fields → 422 with a field-level message if invalid.
+4. `TicketService.create_ticket` calls `model_service.predict(title, description)`:
+   title and description are joined (exactly as in training), each pipeline runs
+   TF-IDF → Logistic Regression → `predict_proba`; the highest probability is the label
+   and its value is the "confidence".
+5. The ticket row is inserted with both predictions, their confidences and the full
+   probability distributions (JSON columns), then committed.
+6. The Prometheus counter `ticketsense_ticket_predictions_total{category,priority}` is incremented.
+7. Response 201 with the stored ticket; middleware logs one JSON line
+   (method, path, status, duration, request ID) and records the latency histogram.
 
-### 3.2 Asynchronous Database Access with SQLAlchemy 2.0 & asyncpg
-- **Decision:** Built on SQLAlchemy 2.0 declarative models using the asynchronous `asyncpg` driver.
-- **Why:** In helpdesk systems, read traffic (agents querying ticket queues, dashboard polling) far exceeds write traffic. Async I/O allows Uvicorn worker threads to handle thousands of concurrent requests without thread starvation.
+Correcting a category (`PATCH`) stores `corrected_category` **next to** `predicted_category`
+rather than overwriting it, so (prediction, correction) pairs remain available as feedback data.
+`effective_category` = correction if present, else prediction; filters and stats use it.
 
-### 3.3 Human-in-the-Loop Feedback Architecture
-- **Decision:** Dedicated `corrected_category` column in the database alongside `predicted_category`.
-- **Why:**
-  - Preserves ground-truth history of what the model originally predicted vs. what the human expert determined.
-  - Facilitates real-time tracking of **Feedback Acceptance Rate** on the dashboard.
-  - Makes exporting verified training data for future model updates trivial (`SELECT title, description, corrected_category FROM tickets WHERE corrected_category IS NOT NULL`).
+## 3. Key decisions and trade-offs
 
-### 3.4 Production Observability
-- **Structured JSON Logging:** Every log event is formatted as a structured JSON record containing timestamp, log level, request path, HTTP method, response status, duration in milliseconds, and an injected `request_id` (`X-Request-ID` header).
-- **Prometheus Metrics:** Native instrumentation tracks request counts, route latency histograms, predictions by category, and human corrections.
+| Decision | Why | Trade-off / alternative |
+| --- | --- | --- |
+| **TF-IDF + Logistic Regression** | Strong baseline for short text, trains in seconds, <1 ms predictions, ~2 MB artifact, fits a 512 MB free instance, probabilities come for free, easy to explain. | Ignores word order/semantics. A transformer would likely help small classes but needs far more memory and latency. The spec said to go heavier only if it clearly helps; I didn't measure that yet (see README "improve next"). |
+| **`class_weight="balanced"`** | One class is 70% of the data; without weighting the model mostly ignores small classes. | Raises recall of small classes at the cost of precision (visible in "Infrastructure & Servers": recall 0.73, precision 0.41). |
+| **Macro F1 as the headline metric** | Accuracy is inflated by the dominant class (always guessing it scores 70%). | Reported alongside accuracy and a majority-class baseline so both are visible. |
+| **Model loaded in-process** | Simplest possible serving; no extra service. | Model updates need a redeploy; to scale, a separate model service or registry would be better. |
+| **Async SQLAlchemy + asyncpg** | Non-blocking DB I/O in an async framework. | Two drivers (asyncpg for the API, psycopg2 for Alembic), derived from one `DATABASE_URL` in `core/config.py` so users configure one variable. |
+| **Alembic migrations at container start** | Schema is versioned and always matches the code that is deployed. `set -e` makes a failed migration stop the deploy. | With many replicas you'd run migrations as a separate release step to avoid races. |
+| **Tests against real PostgreSQL** | Catches Postgres-specific behaviour and proves the migrations run (the test session migrates down and up). | Needs Docker locally; slightly slower than SQLite. |
+| **Fail loudly when the model is missing** | `/predict` returns 503 and `/health` reports `degraded` instead of serving made-up predictions. | The app is unavailable for predictions until fixed, which is the correct behaviour. |
+| **One uvicorn worker** | Fits the free tier's memory; Prometheus counters live in process memory, so one process keeps `/metrics` accurate. | Scale horizontally (more instances) rather than with workers; multi-process would need `prometheus_client` multiprocess mode. |
+| **Pinned scikit-learn version** | A pickled model is only reliable on the version that created it; the version is saved in the artifact and checked at load. | Upgrading scikit-learn requires retraining. |
+| **Categories served by the API** | The frontend reads the class list from `/api/model/metrics`; PATCH rejects unknown categories. A retrain with new labels needs no UI change. | One extra request on page load (cached). |
 
----
+## 4. Data and labelling
 
-## 4. Database Schema
+See the README's *Data* section. In short: the Endava dataset is real but anonymized, so the
+category names are my interpretation of numeric codes, backed by the top-terms evidence in
+`ml/category_evidence.json`; priority depends on an assumption about the urgency scale.
+These are the biggest caveats of the project and are stated wherever metrics are shown.
 
-```sql
-CREATE TABLE tickets (
-    id SERIAL PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    description TEXT NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'open',
-    predicted_category VARCHAR(100) NOT NULL,
-    category_confidence FLOAT NOT NULL,
-    predicted_priority VARCHAR(50) NOT NULL,
-    priority_confidence FLOAT NOT NULL,
-    corrected_category VARCHAR(100) NULL,
-    category_probabilities JSON NULL,
-    priority_probabilities JSON NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-);
+## 5. Observability
 
-CREATE INDEX ix_tickets_status ON tickets (status);
-CREATE INDEX ix_tickets_predicted_category ON tickets (predicted_category);
-CREATE INDEX ix_tickets_predicted_priority ON tickets (predicted_priority);
-CREATE INDEX ix_tickets_status_priority ON tickets (status, predicted_priority);
-CREATE INDEX ix_tickets_created_at ON tickets (created_at);
-```
+- **`GET /health`**: runs `SELECT 1` and checks the model is loaded; 200 `healthy` or 503 `degraded`.
+  Used by the Docker `HEALTHCHECK`, Render's health check and the CI smoke test.
+- **`GET /metrics`**: `ticketsense_http_requests_total{method,endpoint,status_code}`,
+  `ticketsense_http_request_duration_seconds` (histogram), `ticketsense_ticket_predictions_total{category,priority}`,
+  `ticketsense_ticket_corrections_total{original_category,corrected_category}`. Endpoints are labelled by
+  route template (`/api/tickets/{ticket_id}`) so the number of label values stays bounded.
+- **Logs**: one JSON object per line. The request ID is stored in a `ContextVar` by the middleware and
+  added to every record by a logging filter, so any log line written during a request can be tied to it.
+  The ID is returned in the `X-Request-ID` response header.
+
+## 6. Configuration
+
+All configuration comes from environment variables (`.env.example` lists them):
+`DATABASE_URL`, `CORS_ORIGINS`, `ENVIRONMENT`, `LOG_LEVEL`, optional `MODEL_PATH`/`METRICS_PATH`,
+`PORT` (set by Render), and `VITE_API_URL` for the frontend build. No secrets live in the repo.
+
+## 7. Known limitations
+
+- Labels are inferred (see section 4); real deployments would train on their own labelled tickets.
+- Training text is email-style, anonymized and partly non-English, so short modern tickets
+  ("VPN drops") may be classified with lower confidence than the test metrics suggest.
+- No authentication: anyone with the URL can create and edit tickets (fine for a demo, not for production).
+- Free hosting tiers sleep when idle; the first request after a pause can take ~30–60 s.

@@ -13,7 +13,7 @@ services:
     envVars:
       - key: DATABASE_URL # Neon connection string
         sync: false
-      - key: CORS_ORIGINS # the Vercel frontend URL, e.g. https://ticketsense.vercel.app
+      - key: CORS_ORIGINS # only needed if a browser calls the API directly (the Vercel site proxies instead)
         sync: false
       - key: ENVIRONMENT
         value: production

@@ -56,6 +56,7 @@ rather than overwriting it, so (prediction, correction) pairs remain available a
 | **Fail loudly when the model is missing** | `/predict` returns 503 and `/health` reports `degraded` instead of serving made-up predictions. | The app is unavailable for predictions until fixed, which is the correct behaviour. |
 | **One uvicorn worker** | Fits the free tier's memory; Prometheus counters live in process memory, so one process keeps `/metrics` accurate. | Scale horizontally (more instances) rather than with workers; multi-process would need `prometheus_client` multiprocess mode. |
 | **Pinned scikit-learn version** | A pickled model is only reliable on the version that created it; the version is saved in the artifact and checked at load. | Upgrading scikit-learn requires retraining. |
+| **Vercel rewrites instead of cross-origin calls** | The SPA calls `/api/...` on its own domain and Vercel proxies to Render, mirroring the Vite dev proxy. No CORS config or build-time API URL to get wrong. | The backend URL lives in `frontend/vercel.json`; one extra network hop. `CORS_ORIGINS` still exists for setups that call the API directly. |
 | **Categories served by the API** | The frontend reads the class list from `/api/model/metrics`; PATCH rejects unknown categories. A retrain with new labels needs no UI change. | One extra request on page load (cached). |
 
 ## 4. Data and labelling

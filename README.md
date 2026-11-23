@@ -5,7 +5,9 @@
 
 **An IT help-desk app that reads each new support ticket and predicts its category and priority with a machine-learning model served by a FastAPI backend.**
 
-**Live demo:** _coming soon_ · **API docs:** _coming soon_ · **Health:** _coming soon_
+**Live demo:** [ticketsense-opal.vercel.app](https://ticketsense-opal.vercel.app) · **API docs:** [Swagger /docs](https://ticketsense-api-nq5s.onrender.com/docs) · **Health:** [/health](https://ticketsense-api-nq5s.onrender.com/health)
+
+> Hosted on free tiers: if the API has been idle, the first request takes up to a minute while the server wakes up.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -26,7 +28,7 @@
 ```mermaid
 flowchart LR
     U([Browser]) -->|HTTPS| FE["React + TypeScript SPA<br/>(Vercel)"]
-    FE -->|REST / JSON| API["FastAPI backend<br/>(Docker on Render)"]
+    FE -->|"/api/* (Vercel rewrite)"| API["FastAPI backend<br/>(Docker on Render)"]
     API -->|predict| ML["scikit-learn model<br/>TF-IDF + Logistic Regression<br/>(loaded in memory)"]
     API -->|SQLAlchemy async| DB[("PostgreSQL<br/>(Neon)")]
     API -.->|/metrics| P[Prometheus scraper]
@@ -34,7 +36,7 @@ flowchart LR
     T["ml/train.py"] -->|joblib artifact + metrics.json| ML
 ```
 
-On startup the container runs `alembic upgrade head` and only then starts the API (a failed migration stops the deploy). Details and trade-offs are in [docs/DESIGN.md](docs/DESIGN.md).
+In production the browser only talks to the Vercel domain; Vercel forwards `/api/*` and `/health` to Render (see `frontend/vercel.json`), so no CORS setup is needed. On startup the container runs `alembic upgrade head` and only then starts the API (a failed migration stops the deploy). Details and trade-offs are in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Tech stack
 

@@ -11,10 +11,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import joblib
 import matplotlib.pyplot as plt
@@ -77,7 +76,7 @@ class TicketClassifierBundle:
         self.categories = list(category_pipeline.classes_)
         self.priorities = list(priority_pipeline.classes_)
 
-    def predict(self, texts: list[str]) -> list[Dict[str, Any]]:
+    def predict(self, texts: list[str]) -> list[dict[str, Any]]:
         """Predict category and priority with confidence scores for input texts."""
         cat_probs = self.category_pipeline.predict_proba(texts)
         prio_probs = self.priority_pipeline.predict_proba(texts)
@@ -122,7 +121,9 @@ def download_dataset_if_needed(data_path: Path, url: str) -> Path:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TicketSense-ML"})
     with urllib.request.urlopen(req) as resp, open(data_path, "wb") as f:
         f.write(resp.read())
-    logger.info(f"Dataset downloaded successfully ({data_path.stat().st_size / 1024 / 1024:.2f} MB)")
+    logger.info(
+        f"Dataset downloaded successfully ({data_path.stat().st_size / 1024 / 1024:.2f} MB)"
+    )
     return data_path
 
 
@@ -149,7 +150,7 @@ def load_and_preprocess_data(data_path: Path) -> pd.DataFrame:
 
 def train_and_evaluate(
     df: pd.DataFrame, output_dir: Path
-) -> Tuple[TicketClassifierBundle, Dict[str, Any]]:
+) -> tuple[TicketClassifierBundle, dict[str, Any]]:
     """Train TF-IDF + LogisticRegression models and compute evaluation metrics."""
     X = df["text"].values
     y_cat = df["category_label"].values
@@ -229,7 +230,7 @@ def train_and_evaluate(
     logger.info(f"Priority Test Accuracy: {prio_acc:.4f} | Macro F1: {prio_macro_f1:.4f}")
 
     # 3. Build Confusion Matrix Plot for Categories
-    classes = sorted(list(np.unique(y_cat_test)))
+    classes = sorted(np.unique(y_cat_test))
     cm = confusion_matrix(y_cat_test, y_cat_pred, labels=classes)
 
     plt.figure(figsize=(8, 6))
@@ -282,7 +283,7 @@ def train_and_evaluate(
             "accuracy": round(prio_acc, 4),
             "macro_f1": round(prio_macro_f1, 4),
             "weighted_f1": round(float(prio_report["weighted avg"]["f1-score"]), 4),
-            "classes": sorted(list(np.unique(y_prio_test))),
+            "classes": sorted(np.unique(y_prio_test)),
             "per_class": {
                 cls: {
                     "precision": round(float(prio_report[cls]["precision"]), 4),
@@ -290,7 +291,7 @@ def train_and_evaluate(
                     "f1_score": round(float(prio_report[cls]["f1-score"]), 4),
                     "support": int(prio_report[cls]["support"]),
                 }
-                for cls in sorted(list(np.unique(y_prio_test)))
+                for cls in sorted(np.unique(y_prio_test))
             },
         },
     }
@@ -300,7 +301,12 @@ def train_and_evaluate(
         json.dump(metrics, f, indent=2)
     logger.info(f"Saved metrics JSON to: {metrics_path}")
 
-    bundle = TicketClassifierBundle(cat_pipe, prio_pipe)
+    bundle = {
+        "category_pipeline": cat_pipe,
+        "priority_pipeline": prio_pipe,
+        "categories": classes,
+        "priorities": sorted(np.unique(y_prio_test)),
+    }
     return bundle, metrics
 
 

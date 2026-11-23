@@ -1,17 +1,31 @@
+# Install once:  pip install pre-commit && pre-commit install
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.17.6
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-json
+        exclude: ^frontend/tsconfig.*\.json$  # JSON with comments
       - id: check-added-large-files
-        args: ['--maxkb=5000']
+        args: ["--maxkb=3000"]
+      - id: detect-private-key
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks # blocks commits that contain API keys / passwords
+  - repo: local
+    hooks:
+      - id: frontend-lint
+        name: eslint + prettier (frontend)
+        language: system
+        entry: bash -c 'cd frontend && npm run lint && npm run format:check'
+        files: ^frontend/
+        pass_filenames: false

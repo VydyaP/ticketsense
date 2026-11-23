@@ -1,40 +1,30 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Virtual environments
 .venv/
 venv/
-ENV/
-env/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Environment variables & secrets
+# Secrets: never commit real environment files
 .env
-*.env.local
+.env.*
+!.env.example
 
-# Node & Frontend dependencies
+# Frontend
 node_modules/
 dist/
-build/
 coverage/
 .vite/
+.vercel/
 
-# ML Data & Artifacts
+# Raw data is downloaded by ml/train.py (checksum-verified), not committed
 data/
-*.csv
-*.zip
-*.tar.gz
-!ml/artifacts/*.joblib
 
-# IDE & OS
+# IDE / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Test & coverage caches
-.pytest_cache/
-.ruff_cache/
-htmlcov/
-.coverage

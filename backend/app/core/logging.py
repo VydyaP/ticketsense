@@ -1,105 +1,111 @@
+"""Structured JSON logging with a request ID on every line.
+
+How the request ID reaches every log line: the middleware stores it in a
+ContextVar (a per-request variable that is safe with async code), and a
+logging.Filter copies it onto every LogRecord, including records emitted by
+services, the ML module or libraries while that request is being handled.
+"""
+
 from __future__ import annotations
 
 import json
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from contextvars import ContextVar
 from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
+from backend.app.core.config import settings
+
+request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+
+_EXTRA_FIELDS = ("method", "path", "status_code", "duration_ms")
+
+
+class RequestIdFilter(logging.Filter):
+    """Attach the current request ID (or '-' outside a request) to each record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get()
+        return True
+
 
 class JSONLogFormatter(logging.Formatter):
-    """Formats log records as single-line JSON objects with structured metadata."""
+    """Render each record as one JSON object per line (easy to search in log tools)."""
 
     def format(self, record: logging.LogRecord) -> str:
-        log_obj: dict[str, Any] = {
-            "timestamp": self.formatTime(record, self.datefmt),
+        entry: dict[str, Any] = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
             "level": record.levelname,
             "logger": record.name,
+            "request_id": getattr(record, "request_id", "-"),
             "message": record.getMessage(),
         }
-
-        # Include request ID and custom metadata if present
-        if hasattr(record, "request_id"):
-            log_obj["request_id"] = record.request_id
-        if hasattr(record, "path"):
-            log_obj["path"] = record.path
-        if hasattr(record, "method"):
-            log_obj["method"] = record.method
-        if hasattr(record, "status_code"):
-            log_obj["status_code"] = record.status_code
-        if hasattr(record, "duration_ms"):
-            log_obj["duration_ms"] = record.duration_ms
-
+        for field in _EXTRA_FIELDS:
+            if hasattr(record, field):
+                entry[field] = getattr(record, field)
         if record.exc_info:
-            log_obj["exception"] = self.formatException(record.exc_info)
-
-        return json.dumps(log_obj)
-
-
-def setup_logging(log_level: str = "INFO") -> logging.Logger:
-    """Configure the root and application loggers with JSON formatting."""
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-
-    # Avoid duplicate handlers
-    if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
-        handler = logging.StreamHandler()
-        handler.setFormatter(JSONLogFormatter())
-        root_logger.addHandler(handler)
-
-    logger = logging.getLogger("ticketsense")
-    logger.setLevel(log_level)
-    return logger
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry)
 
 
-logger = setup_logging()
+def setup_logging(level: str) -> logging.Logger:
+    """Install one JSON handler on the root logger so every library logs the same way."""
+    handler = logging.StreamHandler()
+    handler.setFormatter(JSONLogFormatter())
+    handler.addFilter(RequestIdFilter())
+
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(level)
+
+    # Route uvicorn's own loggers through the root handler instead of its plain-text one.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).handlers = []
+        logging.getLogger(name).propagate = True
+    # The middleware below already logs each request, so drop uvicorn's duplicate access log.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    return logging.getLogger("ticketsense")
+
+
+logger = setup_logging(settings.LOG_LEVEL)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware that assigns a UUID request_id, logs latency, and injects X-Request-ID header."""
+    """Assign a request ID, log method/path/status/latency, and return X-Request-ID."""
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-        request.state.request_id = request_id
-
-        start_time = time.perf_counter()
-        response: Response
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # Reuse an incoming X-Request-ID (e.g. from a proxy) so IDs can be traced across services.
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+        start = time.perf_counter()
         try:
             response = await call_next(request)
-        except Exception as exc:
-            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            logger.error(
-                f"Request unhandled exception: {exc}",
-                extra={
-                    "request_id": request_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status_code": 500,
-                    "duration_ms": duration_ms,
-                },
-                exc_info=True,
+        except Exception:
+            logger.exception(
+                "Unhandled error",
+                extra={"method": request.method, "path": request.url.path, "status_code": 500},
             )
-            raise exc
+            raise
+        finally:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
-
-        # Skip spamming logs for frequent metrics / health checks unless error
-        if request.url.path not in ("/metrics", "/health") or response.status_code >= 400:
+        # Health checks and Prometheus scrapes run every few seconds; only log them if they fail.
+        if request.url.path not in ("/health", "/metrics") or response.status_code >= 400:
             logger.info(
-                f"{request.method} {request.url.path} -> {response.status_code} ({duration_ms}ms)",
+                f"{request.method} {request.url.path} -> {response.status_code}",
                 extra={
-                    "request_id": request_id,
                     "method": request.method,
                     "path": request.url.path,
                     "status_code": response.status_code,
                     "duration_ms": duration_ms,
                 },
             )
-
+        request_id_var.reset(token)
         return response

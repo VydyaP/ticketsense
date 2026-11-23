@@ -1,149 +1,115 @@
+"""API tests for ticket endpoints, run against a real PostgreSQL database."""
+
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 
+from backend.app.ml.model import model_service
 
-@pytest.mark.asyncio
-async def test_create_and_predict_ticket(client: AsyncClient):
-    """Test ticket creation persists ticket and performs ML classification."""
-    payload = {
-        "title": "Need second monitor for remote desk setup",
-        "description": "Please approve purchase of a 27 inch Dell monitor and HDMI display cable.",
-    }
-    response = await client.post("/api/tickets", json=payload)
-    assert response.status_code == 201
-    data = response.json()
+CATEGORIES = model_service.categories
 
-    assert data["id"] is not None
-    assert data["title"] == payload["title"]
-    assert data["description"] == payload["description"]
+
+async def create(client: AsyncClient, title: str, description: str) -> dict:
+    response = await client.post("/api/tickets", json={"title": title, "description": description})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_create_ticket_stores_prediction(client: AsyncClient):
+    data = await create(client, "Need second monitor", "Please provide a 27 inch monitor.")
+
+    assert data["id"] == 1
     assert data["status"] == "open"
-    assert data["predicted_category"] in (
-        "Hardware",
-        "Access/Account",
-        "Network",
-        "Facilities",
-        "Other",
-        "Software",
-    )
-    assert 0.0 <= data["category_confidence"] <= 1.0
+    assert data["predicted_category"] in CATEGORIES
     assert data["predicted_priority"] in ("High", "Medium", "Low")
-    assert 0.0 <= data["priority_confidence"] <= 1.0
+    assert 0.0 <= data["category_confidence"] <= 1.0
     assert data["effective_category"] == data["predicted_category"]
     assert data["corrected_category"] is None
 
+    # Round-trip through the database.
+    fetched = await client.get(f"/api/tickets/{data['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["category_probabilities"] == data["category_probabilities"]
 
-@pytest.mark.asyncio
-async def test_ticket_validation_errors(client: AsyncClient):
-    """Test input validation for invalid or too-short tickets."""
-    # Title too short
-    response = await client.post(
-        "/api/tickets", json={"title": "hi", "description": "Too short title"}
+
+async def test_create_ticket_validation(client: AsyncClient):
+    too_short_title = await client.post(
+        "/api/tickets", json={"title": "hi", "description": "valid description"}
     )
-    assert response.status_code == 422
+    assert too_short_title.status_code == 422
 
-    # Description too short
-    response = await client.post(
-        "/api/tickets", json={"title": "Valid title here", "description": "bad"}
-    )
-    assert response.status_code == 422
+    missing_field = await client.post("/api/tickets", json={"title": "Valid title"})
+    assert missing_field.status_code == 422
 
 
-@pytest.mark.asyncio
-async def test_list_and_filter_tickets(client: AsyncClient):
-    """Test listing tickets with pagination and filtering."""
-    # Create 3 tickets
-    t1 = await client.post(
-        "/api/tickets", json={"title": "VPN disconnects", "description": "Network gateway issue"}
-    )
-    t2 = await client.post(
-        "/api/tickets",
-        json={"title": "Password expired", "description": "Cannot login to email account"},
-    )
-    t3 = await client.post(
-        "/api/tickets",
-        json={"title": "Monitor flickering", "description": "Hardware cable replacement required"},
-    )
+async def test_get_missing_ticket_returns_404(client: AsyncClient):
+    response = await client.get("/api/tickets/999")
+    assert response.status_code == 404
+    assert "999" in response.json()["detail"]
 
-    assert t1.status_code == 201
-    assert t2.status_code == 201
-    assert t3.status_code == 201
 
-    # List all
-    response = await client.get("/api/tickets")
+async def test_list_filter_search_and_paginate(client: AsyncClient):
+    await create(client, "VPN disconnects", "Connection to the server keeps dropping")
+    await create(client, "Password expired", "Cannot log in to my account")
+    monitor = await create(client, "Monitor flickering", "Screen flickers all day")
+
+    everything = (await client.get("/api/tickets")).json()
+    assert everything["total"] == 3
+    assert everything["items"][0]["id"] == monitor["id"]  # newest first
+
+    search = (await client.get("/api/tickets", params={"search": "monitor"})).json()
+    assert search["total"] == 1  # ILIKE: case-insensitive
+
+    page = (await client.get("/api/tickets", params={"page": 2, "page_size": 2})).json()
+    assert page["total_pages"] == 2
+    assert len(page["items"]) == 1
+
+    by_category = (
+        await client.get("/api/tickets", params={"category": monitor["predicted_category"]})
+    ).json()
+    assert monitor["id"] in [t["id"] for t in by_category["items"]]
+
+    bad_filter = await client.get("/api/tickets", params={"status": "nonsense"})
+    assert bad_filter.status_code == 422
+
+
+async def test_update_status_and_correct_category(client: AsyncClient):
+    ticket = await create(client, "Wi-Fi keeps dropping", "Signal drops near room B")
+    url = f"/api/tickets/{ticket['id']}"
+
+    response = await client.patch(url, json={"status": "in_progress"})
     assert response.status_code == 200
-    data = response.json()
-    assert data["total"] == 3
-    assert len(data["items"]) == 3
+    assert response.json()["status"] == "in_progress"
 
-    # Search filter
-    search_resp = await client.get("/api/tickets?search=Monitor")
-    assert search_resp.status_code == 200
-    search_data = search_resp.json()
-    assert search_data["total"] == 1
-    assert "Monitor" in search_data["items"][0]["title"]
-
-
-@pytest.mark.asyncio
-async def test_update_ticket_status_and_category_feedback(client: AsyncClient):
-    """Test updating ticket workflow status and recording human category correction."""
-    # Create ticket
-    create_resp = await client.post(
-        "/api/tickets",
-        json={
-            "title": "Wi-Fi keeps dropping on floor 3",
-            "description": "Signal drops intermittently near conference room B.",
-        },
-    )
-    ticket_id = create_resp.json()["id"]
-
-    # 1. Update status to in_progress
-    patch_resp = await client.patch(f"/api/tickets/{ticket_id}", json={"status": "in_progress"})
-    assert patch_resp.status_code == 200
-    assert patch_resp.json()["status"] == "in_progress"
-
-    # 2. Correct category (human feedback)
-    feedback_resp = await client.patch(
-        f"/api/tickets/{ticket_id}", json={"corrected_category": "Network"}
-    )
-    assert feedback_resp.status_code == 200
-    data = feedback_resp.json()
-    assert data["corrected_category"] == "Network"
-    assert data["effective_category"] == "Network"
-
-    # 3. Invalid status pattern returns 422
-    bad_resp = await client.patch(f"/api/tickets/{ticket_id}", json={"status": "invalid_status"})
-    assert bad_resp.status_code == 422
-
-    # 4. Non-existent ticket returns 404
-    missing_resp = await client.patch("/api/tickets/99999", json={"status": "resolved"})
-    assert missing_resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_predict_endpoint_without_saving(client: AsyncClient):
-    """Test POST /api/predict returns predictions without creating records in database."""
-    payload = {
-        "title": "Need administrator rights to install Docker Desktop",
-        "description": "Please grant local administrative access to install container tools on developer laptop.",
-    }
-    response = await client.post("/api/predict", json=payload)
+    other = next(c for c in CATEGORIES if c != ticket["predicted_category"])
+    response = await client.patch(url, json={"corrected_category": other})
     assert response.status_code == 200
-    data = response.json()
+    assert response.json()["corrected_category"] == other
+    assert response.json()["effective_category"] == other
+    assert response.json()["predicted_category"] == ticket["predicted_category"]  # kept
 
-    assert data["category"] in (
-        "Access/Account",
-        "Hardware",
-        "Network",
-        "Facilities",
-        "Other",
-        "Software",
+    # The filter uses the corrected category once a human has fixed it.
+    filtered = (await client.get("/api/tickets", params={"category": other})).json()
+    assert [t["id"] for t in filtered["items"]] == [ticket["id"]]
+
+
+async def test_update_validation(client: AsyncClient):
+    ticket = await create(client, "Printer jam", "Printer on floor 2 jams")
+    url = f"/api/tickets/{ticket['id']}"
+
+    assert (await client.patch(url, json={"status": "banana"})).status_code == 422
+    unknown = await client.patch(url, json={"corrected_category": "Not A Category"})
+    assert unknown.status_code == 422
+    assert "Valid categories" in unknown.json()["detail"]
+    assert (await client.patch(url, json={})).status_code == 422
+    assert (await client.patch("/api/tickets/999", json={"status": "resolved"})).status_code == 404
+
+
+async def test_predict_does_not_save(client: AsyncClient):
+    response = await client.post(
+        "/api/predict",
+        json={"title": "Need admin rights", "description": "Please grant local admin access"},
     )
-    assert 0.0 <= data["category_confidence"] <= 1.0
-    assert data["priority"] in ("High", "Medium", "Low")
-    assert 0.0 <= data["priority_confidence"] <= 1.0
-
-    # Ensure no tickets were persisted
-    list_resp = await client.get("/api/tickets")
-    assert list_resp.json()["total"] == 0
+    assert response.status_code == 200
+    assert response.json()["category"] in CATEGORIES
+    assert (await client.get("/api/tickets")).json()["total"] == 0

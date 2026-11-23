@@ -1,7 +1,7 @@
 """Create tickets table.
 
 Revision ID: 001_create_tickets_table
-Revises: 
+Revises:
 Create Date: 2026-11-23 13:20:00.000000
 
 """

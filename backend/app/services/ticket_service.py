@@ -106,7 +106,7 @@ class TicketService:
             ticket.status = update_in.status
 
         if update_in.corrected_category is not None:
-            ticket.corrected_category = update_in.corrected_category.strip()
+            ticket.corrected_category = update_in.corrected_category
 
             # Track human correction metric
             TICKET_CORRECTIONS_TOTAL.labels(
@@ -148,16 +148,18 @@ class TicketService:
         )
         total_corrections = (await db.execute(corrections_stmt)).scalar_one()
 
-        # Calculate acceptance rate (percentage of tickets where predicted category was not corrected)
-        if total_tickets > 0:
-            accuracy_rate = round(((total_tickets - total_corrections) / total_tickets) * 100, 2)
-        else:
-            accuracy_rate = 100.0
+        # Share of tickets whose predicted category nobody has corrected. This is NOT
+        # accuracy: an uncorrected ticket may simply not have been reviewed yet.
+        uncorrected_rate = (
+            round((total_tickets - total_corrections) / total_tickets * 100, 1)
+            if total_tickets
+            else None
+        )
 
         return {
             "total_tickets": total_tickets,
             "total_corrections": total_corrections,
-            "feedback_accuracy_rate": accuracy_rate,
+            "uncorrected_rate": uncorrected_rate,
             "status_counts": status_counts,
             "category_counts": category_counts,
             "priority_counts": priority_counts,

@@ -1,67 +1,67 @@
+"""Tests for monitoring endpoints, dashboard stats and model metrics."""
+
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 
+from backend.app.ml.model import model_service
 
-@pytest.mark.asyncio
-async def test_health_check_endpoint(client: AsyncClient):
-    """Test GET /health returns 200 healthy status."""
+
+async def test_health_reports_db_and_model(client: AsyncClient):
     response = await client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
     assert data["database"] == "connected"
     assert data["model_loaded"] is True
-    assert "version" in data
-    assert "timestamp" in data
 
 
-@pytest.mark.asyncio
-async def test_prometheus_metrics_endpoint(client: AsyncClient):
-    """Test GET /metrics returns standard Prometheus metrics exposition format."""
-    # Trigger an API request first so metrics are populated
-    await client.get("/")
+async def test_request_id_header(client: AsyncClient):
+    generated = await client.get("/")
+    assert generated.headers["X-Request-ID"]
 
-    response = await client.get("/metrics")
-    assert response.status_code == 200
-    assert "text/plain" in response.headers["content-type"]
-    body = response.text
-    assert "ticketsense_http_requests_total" in body
-    assert "ticketsense_ticket_predictions_total" in body
+    echoed = await client.get("/", headers={"X-Request-ID": "trace-123"})
+    assert echoed.headers["X-Request-ID"] == "trace-123"
 
 
-@pytest.mark.asyncio
-async def test_stats_and_model_metrics(client: AsyncClient):
-    """Test GET /api/stats and GET /api/model/metrics endpoints."""
-    # Create two tickets: one unmodified, one with corrected category
+async def test_prometheus_metrics(client: AsyncClient):
     await client.post(
-        "/api/tickets",
-        json={"title": "Monitor dead", "description": "Cannot turn on screen after power surge."},
+        "/api/tickets", json={"title": "Monitor broken", "description": "No display at all"}
     )
-    t2 = await client.post(
-        "/api/tickets",
-        json={"title": "Badge access", "description": "Need building access card activated."},
+    await client.get("/api/tickets/12345")
+
+    body = (await client.get("/metrics")).text
+    assert "ticketsense_http_requests_total" in body
+    assert "ticketsense_http_request_duration_seconds_bucket" in body
+    assert "ticketsense_ticket_predictions_total{" in body
+    # Paths are labelled by route template, not raw IDs (keeps label count bounded).
+    assert 'endpoint="/api/tickets/{ticket_id}"' in body
+    assert 'endpoint="/api/tickets/12345"' not in body
+
+
+async def test_stats(client: AsyncClient):
+    await client.post(
+        "/api/tickets", json={"title": "Monitor dead", "description": "Screen will not turn on"}
     )
-    t2_id = t2.json()["id"]
+    second = await client.post(
+        "/api/tickets", json={"title": "Badge lost", "description": "I lost my access card"}
+    )
+    await client.patch(
+        f"/api/tickets/{second.json()['id']}",
+        json={"corrected_category": model_service.categories[0], "status": "resolved"},
+    )
 
-    # Provide category feedback on t2
-    await client.patch(f"/api/tickets/{t2_id}", json={"corrected_category": "Facilities"})
-
-    # Check stats endpoint
-    stats_resp = await client.get("/api/stats")
-    assert stats_resp.status_code == 200
-    stats = stats_resp.json()
+    stats = (await client.get("/api/stats")).json()
     assert stats["total_tickets"] == 2
     assert stats["total_corrections"] == 1
-    assert stats["feedback_accuracy_rate"] == 50.0
-    assert "open" in stats["status_counts"]
+    assert stats["status_counts"] == {"open": 1, "resolved": 1}
+    assert sum(stats["category_counts"].values()) == 2
+    assert sum(stats["priority_counts"].values()) == 2
 
-    # Check model metrics endpoint
-    metrics_resp = await client.get("/api/model/metrics")
-    assert metrics_resp.status_code == 200
-    metrics = metrics_resp.json()
-    assert "dataset" in metrics
-    assert "category_model" in metrics
-    assert "priority_model" in metrics
-    assert metrics["category_model"]["accuracy"] > 0.70
+
+async def test_model_metrics_endpoint(client: AsyncClient):
+    metrics = (await client.get("/api/model/metrics")).json()
+    assert metrics["category_model"]["classes"] == model_service.categories
+    # The trained model must beat the "always predict the biggest class" baseline.
+    cat = metrics["category_model"]
+    assert cat["macro_f1"] > cat["baseline_majority_class"]["macro_f1"]

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Allowed workflow states. Kept as a Literal so FastAPI validates input and
+# documents the options in Swagger automatically.
+TicketStatus = Literal["open", "in_progress", "resolved", "closed"]
+Priority = Literal["High", "Medium", "Low"]
 
 
 class TicketCreate(BaseModel):
@@ -26,21 +32,20 @@ class TicketCreate(BaseModel):
 class TicketUpdate(BaseModel):
     """Schema for updating ticket status or correcting ticket category."""
 
-    status: str | None = Field(
-        None,
-        description="Ticket status: 'open', 'in_progress', 'resolved', 'closed'",
-        pattern="^(open|in_progress|resolved|closed)$",
-    )
+    status: TicketStatus | None = Field(None, description="New workflow status")
     corrected_category: str | None = Field(
         None,
-        description="Corrected category provided as human triage feedback",
+        min_length=1,
+        max_length=100,
+        description="Human correction of the predicted category; must be one of the "
+        "model's categories (see GET /api/model/metrics -> category_model.classes)",
     )
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "status": "in_progress",
-                "corrected_category": "Network",
+                "corrected_category": "Hardware & Equipment",
             }
         }
     )
@@ -52,7 +57,7 @@ class TicketResponse(BaseModel):
     id: int
     title: str
     description: str
-    status: str
+    status: TicketStatus
     predicted_category: str
     category_confidence: float
     predicted_priority: str
@@ -109,7 +114,9 @@ class TicketStats(BaseModel):
 
     total_tickets: int
     total_corrections: int
-    feedback_accuracy_rate: float
+    uncorrected_rate: float | None = Field(
+        None, description="% of tickets whose predicted category has not been corrected"
+    )
     status_counts: dict[str, int]
     category_counts: dict[str, int]
     priority_counts: dict[str, int]

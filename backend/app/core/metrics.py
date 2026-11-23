@@ -53,10 +53,10 @@ class PrometheusMetricsMiddleware(BaseHTTPMiddleware):
             raise exc
         finally:
             duration = time.perf_counter() - start_time
-            endpoint = request.url.path
-            # Normalize IDs in path for Prometheus label cardinality: e.g. /api/tickets/123 -> /api/tickets/{id}
-            if endpoint.startswith("/api/tickets/") and endpoint != "/api/tickets/":
-                endpoint = "/api/tickets/{id}"
+            # Label by the route template (/api/tickets/{ticket_id}), not the raw path,
+            # so IDs and random 404 URLs from bots can't create unlimited label values.
+            route = request.scope.get("route")
+            endpoint = getattr(route, "path", "unmatched")
 
             HTTP_REQUESTS_TOTAL.labels(
                 method=request.method,

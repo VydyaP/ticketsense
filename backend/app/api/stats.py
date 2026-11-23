@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.database import get_db
@@ -29,5 +29,11 @@ async def get_stats(db: AsyncSession = Depends(get_db)) -> TicketStats:
     summary="Get model training evaluation metrics",
 )
 async def get_model_metrics() -> dict[str, Any]:
-    """Return model evaluation metrics including accuracy, macro F1, and per-class reports."""
-    return model_service.get_metrics()
+    """Return the evaluation metrics produced by ml/train.py on the held-out test set."""
+    metrics = model_service.get_metrics()
+    if metrics is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model metrics unavailable. Run `python ml/train.py`.",
+        )
+    return metrics

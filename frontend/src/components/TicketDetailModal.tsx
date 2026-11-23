@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, Check, ArrowRight, Clock, Tag, AlertOctagon } from 'lucide-react';
-import { api } from '../services/api';
-import { Ticket } from '../types/ticket';
+import React, { useState } from "react";
+import { X, Check, ArrowRight, Clock, Tag, AlertOctagon } from "lucide-react";
+import { api } from "../services/api";
+import { Ticket } from "../types/ticket";
+import { useCategories } from "../hooks/useCategories";
 
 interface TicketDetailModalProps {
   ticket: Ticket;
@@ -9,28 +10,24 @@ interface TicketDetailModalProps {
   onTicketUpdated: (updatedTicket: Ticket) => void;
 }
 
-const CATEGORY_OPTIONS = [
-  'Access/Account',
-  'Hardware',
-  'Network',
-  'Software',
-  'Facilities',
-  'Other',
-];
-
 export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   ticket,
   onClose,
   onTicketUpdated,
 }) => {
+  const categories = useCategories();
   const [selectedStatus, setSelectedStatus] = useState(ticket.status);
-  const [selectedCategory, setSelectedCategory] = useState(ticket.effective_category);
+  const [selectedCategory, setSelectedCategory] = useState(
+    ticket.effective_category,
+  );
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async () => {
     try {
       setSaving(true);
+      setSaveError(null);
       const updates: { status?: string; corrected_category?: string } = {};
 
       if (selectedStatus !== ticket.status) {
@@ -52,7 +49,9 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
         onClose();
       }
     } catch (err) {
-      console.error('Failed to update ticket:', err);
+      setSaveError(
+        err instanceof Error ? err.message : "Failed to update ticket",
+      );
     } finally {
       setSaving(false);
     }
@@ -60,14 +59,14 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
   const getPriorityColor = (prio: string) => {
     switch (prio) {
-      case 'High':
-        return 'bg-rose-50 text-rose-700 border-rose-200';
-      case 'Medium':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'Low':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case "High":
+        return "bg-rose-50 text-rose-700 border-rose-200";
+      case "Medium":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Low":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200";
       default:
-        return 'bg-slate-50 text-slate-700 border-slate-200';
+        return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
 
@@ -82,7 +81,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             </span>
             <span
               className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase border ${getPriorityColor(
-                ticket.predicted_priority
+                ticket.predicted_priority,
               )}`}
             >
               {ticket.predicted_priority} Priority
@@ -115,14 +114,18 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div>
                 <span className="text-slate-500">Predicted Category:</span>
-                <span className="ml-1.5 font-bold text-slate-900">{ticket.predicted_category}</span>
+                <span className="ml-1.5 font-bold text-slate-900">
+                  {ticket.predicted_category}
+                </span>
                 <span className="ml-1 text-sky-700 font-medium">
                   ({(ticket.category_confidence * 100).toFixed(1)}% conf.)
                 </span>
               </div>
               <div>
                 <span className="text-slate-500">Predicted Priority:</span>
-                <span className="ml-1.5 font-bold text-slate-900">{ticket.predicted_priority}</span>
+                <span className="ml-1.5 font-bold text-slate-900">
+                  {ticket.predicted_priority}
+                </span>
                 <span className="ml-1 text-sky-700 font-medium">
                   ({(ticket.priority_confidence * 100).toFixed(1)}% conf.)
                 </span>
@@ -133,8 +136,9 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               <div className="text-xs bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-800 flex items-center space-x-1.5">
                 <AlertOctagon className="w-4 h-4 text-amber-600 flex-shrink-0" />
                 <span>
-                  Corrected by agent from <b>{ticket.predicted_category}</b> to{' '}
-                  <b>{ticket.corrected_category}</b> (Stored as model retraining feedback).
+                  Corrected by agent from <b>{ticket.predicted_category}</b> to{" "}
+                  <b>{ticket.corrected_category}</b> (Stored as model retraining
+                  feedback).
                 </span>
               </div>
             )}
@@ -144,12 +148,18 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-200">
             {/* Status Selector */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+              <label
+                htmlFor="ticket-status"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1.5"
+              >
                 Workflow Status
               </label>
               <select
+                id="ticket-status"
                 value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value as any)}
+                onChange={(e) =>
+                  setSelectedStatus(e.target.value as Ticket["status"])
+                }
                 className="w-full text-sm rounded-xl border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
               >
                 <option value="open">Open</option>
@@ -161,17 +171,22 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
             {/* Human Category Feedback Selector */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
+              <label
+                htmlFor="ticket-category"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1.5"
+              >
                 Category Feedback / Correction
               </label>
               <select
+                id="ticket-category"
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="w-full text-sm rounded-xl border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
               >
-                {CATEGORY_OPTIONS.map((cat) => (
+                {categories.map((cat) => (
                   <option key={cat} value={cat}>
-                    {cat} {cat === ticket.predicted_category ? '(ML Predicted)' : ''}
+                    {cat}{" "}
+                    {cat === ticket.predicted_category ? "(ML Predicted)" : ""}
                   </option>
                 ))}
               </select>
@@ -182,13 +197,20 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           <div className="flex items-center space-x-4 text-xs text-slate-400">
             <span className="flex items-center space-x-1">
               <Clock className="w-3.5 h-3.5" />
-              <span>Created: {new Date(ticket.created_at).toLocaleString()}</span>
+              <span>
+                Created: {new Date(ticket.created_at).toLocaleString()}
+              </span>
             </span>
           </div>
         </div>
 
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end items-center space-x-3">
+          {saveError && (
+            <p role="alert" className="mr-auto text-xs text-rose-600">
+              {saveError}
+            </p>
+          )}
           <button
             type="button"
             onClick={onClose}

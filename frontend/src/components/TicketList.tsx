@@ -1,10 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { Search, ChevronLeft, ChevronRight, Eye, RefreshCw, Filter } from 'lucide-react';
-import { api } from '../services/api';
-import { Ticket } from '../types/ticket';
-import { TicketDetailModal } from './TicketDetailModal';
+import React, { useEffect, useState } from "react";
+import {
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  RefreshCw,
+  Filter,
+} from "lucide-react";
+import { api } from "../services/api";
+import { Ticket } from "../types/ticket";
+import { useCategories } from "../hooks/useCategories";
+import { TicketDetailModal } from "./TicketDetailModal";
 
 export const TicketList: React.FC = () => {
+  const categories = useCategories();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -12,10 +21,10 @@ export const TicketList: React.FC = () => {
   const [total, setTotal] = useState(0);
 
   // Filters
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState('');
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState("");
 
   // Selected for modal
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -35,7 +44,7 @@ export const TicketList: React.FC = () => {
       setTotalPages(res.total_pages);
       setTotal(res.total);
     } catch (err) {
-      console.error('Failed to load tickets:', err);
+      console.error("Failed to load tickets:", err);
     } finally {
       setLoading(false);
     }
@@ -53,29 +62,29 @@ export const TicketList: React.FC = () => {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'open':
-        return 'bg-blue-50 text-blue-700 border-blue-200';
-      case 'in_progress':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'resolved':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-      case 'closed':
-        return 'bg-slate-100 text-slate-700 border-slate-200';
+      case "open":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+      case "in_progress":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "resolved":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200";
+      case "closed":
+        return "bg-slate-100 text-slate-700 border-slate-200";
       default:
-        return 'bg-slate-50 text-slate-700 border-slate-200';
+        return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
 
   const getPriorityBadge = (prio: string) => {
     switch (prio) {
-      case 'High':
-        return 'bg-rose-50 text-rose-700 border-rose-200';
-      case 'Medium':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'Low':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case "High":
+        return "bg-rose-50 text-rose-700 border-rose-200";
+      case "Medium":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Low":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200";
       default:
-        return 'bg-slate-50 text-slate-700 border-slate-200';
+        return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
 
@@ -126,12 +135,11 @@ export const TicketList: React.FC = () => {
             className="text-xs rounded-lg border border-slate-300 px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500"
           >
             <option value="">All Categories</option>
-            <option value="Access/Account">Access/Account</option>
-            <option value="Hardware">Hardware</option>
-            <option value="Network">Network</option>
-            <option value="Software">Software</option>
-            <option value="Facilities">Facilities</option>
-            <option value="Other">Other</option>
+            {categories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
           </select>
 
           <select
@@ -150,17 +158,17 @@ export const TicketList: React.FC = () => {
 
           <button
             onClick={() => {
-              setSearch('');
-              setStatusFilter('');
-              setCategoryFilter('');
-              setPriorityFilter('');
+              setSearch("");
+              setStatusFilter("");
+              setCategoryFilter("");
+              setPriorityFilter("");
               setPage(1);
               fetchTickets();
             }}
             className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
             title="Refresh"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
       </div>
@@ -184,20 +192,29 @@ export const TicketList: React.FC = () => {
             <tbody className="divide-y divide-slate-200 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-slate-400">
+                  <td
+                    colSpan={8}
+                    className="px-5 py-12 text-center text-slate-400"
+                  >
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-sky-500" />
                     <span>Loading tickets queue...</span>
                   </td>
                 </tr>
               ) : tickets.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-slate-400">
+                  <td
+                    colSpan={8}
+                    className="px-5 py-12 text-center text-slate-400"
+                  >
                     No tickets found matching your query.
                   </td>
                 </tr>
               ) : (
                 tickets.map((t) => (
-                  <tr key={t.id} className="hover:bg-slate-50/70 transition-colors">
+                  <tr
+                    key={t.id}
+                    className="hover:bg-slate-50/70 transition-colors"
+                  >
                     <td className="px-5 py-3.5 font-mono text-xs font-bold text-slate-500">
                       #{t.id}
                     </td>
@@ -207,10 +224,10 @@ export const TicketList: React.FC = () => {
                     <td className="px-5 py-3.5 whitespace-nowrap">
                       <span
                         className={`text-xs px-2.5 py-0.5 rounded-full font-medium border ${getStatusBadge(
-                          t.status
+                          t.status,
                         )}`}
                       >
-                        {t.status.replace('_', ' ')}
+                        {t.status.replace("_", " ")}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
@@ -231,7 +248,7 @@ export const TicketList: React.FC = () => {
                     <td className="px-5 py-3.5 whitespace-nowrap">
                       <span
                         className={`text-xs px-2 py-0.5 rounded font-bold uppercase border ${getPriorityBadge(
-                          t.predicted_priority
+                          t.predicted_priority,
                         )}`}
                       >
                         {t.predicted_priority}
@@ -262,8 +279,10 @@ export const TicketList: React.FC = () => {
         {/* Pagination Footer */}
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500">
           <div>
-            Showing <span className="font-bold text-slate-700">{tickets.length}</span> of{' '}
-            <span className="font-bold text-slate-700">{total}</span> total tickets
+            Showing{" "}
+            <span className="font-bold text-slate-700">{tickets.length}</span>{" "}
+            of <span className="font-bold text-slate-700">{total}</span> total
+            tickets
           </div>
           <div className="flex items-center space-x-2">
             <button

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Send, RefreshCw, AlertCircle, Check } from 'lucide-react';
-import { api } from '../services/api';
-import { PredictionResult } from '../types/ticket';
+import React, { useState, useEffect } from "react";
+import { Sparkles, Send, RefreshCw, AlertCircle, Check } from "lucide-react";
+import { api } from "../services/api";
+import { PredictionResult } from "../types/ticket";
 
 interface TicketFormProps {
   onTicketCreated: () => void;
@@ -9,30 +9,30 @@ interface TicketFormProps {
 
 const SAMPLE_TEMPLATES = [
   {
-    label: 'VPN Drop (Network)',
-    title: 'Pulse Secure VPN disconnects every 10 minutes',
-    desc: 'Whenever I connect to the office gateway from home, the connection drops packet loss ping to intranet hosts fails.',
+    label: "VPN drops",
+    title: "Pulse Secure VPN disconnects every 10 minutes",
+    desc: "Whenever I connect to the office gateway from home, the connection drops packet loss ping to intranet hosts fails.",
   },
   {
-    label: 'Password Reset (Access)',
-    title: 'Locked out of Oracle ERP account',
-    desc: 'Password expired over the weekend and repeated login attempts have locked my corporate access profile.',
+    label: "Locked account",
+    title: "Locked out of Oracle ERP account",
+    desc: "Password expired over the weekend and repeated login attempts have locked my corporate access profile.",
   },
   {
-    label: 'Monitor Issue (Hardware)',
-    title: 'Dual monitor screen flickering after docking station update',
-    desc: 'Dell USB-C dock is causing secondary display to go black intermittently. Need new HDMI or DisplayPort cable.',
+    label: "Monitor flicker",
+    title: "Dual monitor screen flickering after docking station update",
+    desc: "Dell USB-C dock is causing secondary display to go black intermittently. Need new HDMI or DisplayPort cable.",
   },
   {
-    label: 'Badge Access (Facilities)',
-    title: 'Employee ID keycard not working at 4th floor turnstile',
-    desc: 'Security card reader beeps red when scanning my badge at building main entrance and office floor entrance.',
+    label: "Lost badge",
+    title: "Employee ID keycard not working at 4th floor turnstile",
+    desc: "Security card reader beeps red when scanning my badge at building main entrance and office floor entrance.",
   },
 ];
 
 export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
@@ -62,11 +62,11 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (title.trim().length < 3) {
-      setError('Title must be at least 3 characters long');
+      setError("Title must be at least 3 characters long");
       return;
     }
     if (description.trim().length < 5) {
-      setError('Description must be at least 5 characters long');
+      setError("Description must be at least 5 characters long");
       return;
     }
 
@@ -75,15 +75,15 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
       setError(null);
       await api.createTicket(title, description);
       setSuccess(true);
-      setTitle('');
-      setDescription('');
+      setTitle("");
+      setDescription("");
       setPrediction(null);
       setTimeout(() => {
         setSuccess(false);
         onTicketCreated();
       }, 1200);
     } catch (err: any) {
-      setError(err.message || 'Failed to submit ticket');
+      setError(err.message || "Failed to submit ticket");
     } finally {
       setSubmitting(false);
     }
@@ -97,14 +97,14 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
 
   const getPriorityBadgeColor = (prio: string) => {
     switch (prio) {
-      case 'High':
-        return 'bg-rose-50 text-rose-700 border-rose-200';
-      case 'Medium':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'Low':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case "High":
+        return "bg-rose-50 text-rose-700 border-rose-200";
+      case "Medium":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+      case "Low":
+        return "bg-emerald-50 text-emerald-700 border-emerald-200";
       default:
-        return 'bg-slate-50 text-slate-700 border-slate-200';
+        return "bg-slate-50 text-slate-700 border-slate-200";
     }
   };
 
@@ -116,7 +116,8 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
           <div>
             <h2 className="text-lg font-bold">Submit Support Ticket</h2>
             <p className="text-xs text-slate-300 mt-0.5">
-              Natural Language Processing automatically classifies category and priority in real-time.
+              Natural Language Processing automatically classifies category and
+              priority in real-time.
             </p>
           </div>
           <div className="flex items-center space-x-1.5 text-xs text-sky-400 bg-sky-950/60 px-3 py-1.5 rounded-lg border border-sky-800/50">
@@ -127,7 +128,9 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
 
         {/* Quick Demo Templates */}
         <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-500">Quick Templates:</span>
+          <span className="text-xs font-medium text-slate-500">
+            Quick Templates:
+          </span>
           {SAMPLE_TEMPLATES.map((tmpl, idx) => (
             <button
               key={idx}
@@ -152,12 +155,17 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
           {success && (
             <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center space-x-2">
               <Check className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-              <span>Ticket created successfully! Redirecting to ticket queue...</span>
+              <span>
+                Ticket created successfully! Redirecting to ticket queue...
+              </span>
             </div>
           )}
 
           <div>
-            <label htmlFor="ticket-title" className="block text-sm font-semibold text-slate-800 mb-1.5">
+            <label
+              htmlFor="ticket-title"
+              className="block text-sm font-semibold text-slate-800 mb-1.5"
+            >
               Ticket Title / Subject
             </label>
             <input
@@ -172,7 +180,10 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
           </div>
 
           <div>
-            <label htmlFor="ticket-desc" className="block text-sm font-semibold text-slate-800 mb-1.5">
+            <label
+              htmlFor="ticket-desc"
+              className="block text-sm font-semibold text-slate-800 mb-1.5"
+            >
               Issue Description
             </label>
             <textarea
@@ -194,15 +205,23 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
                   <Sparkles className="w-3.5 h-3.5 text-sky-600" />
                   <span>Real-time Triage Prediction</span>
                 </span>
-                {previewing && <span className="text-xs text-sky-600 animate-pulse">Analyzing...</span>}
+                {previewing && (
+                  <span className="text-xs text-sky-600 animate-pulse">
+                    Analyzing...
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Predicted Category */}
                 <div className="bg-white p-3.5 rounded-lg border border-slate-200">
-                  <div className="text-xs text-slate-500 font-medium">Predicted Category</div>
+                  <div className="text-xs text-slate-500 font-medium">
+                    Predicted Category
+                  </div>
                   <div className="flex items-center justify-between mt-1">
-                    <span className="font-bold text-slate-900 text-base">{prediction.category}</span>
+                    <span className="font-bold text-slate-900 text-base">
+                      {prediction.category}
+                    </span>
                     <span className="text-xs font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-full">
                       {(prediction.category_confidence * 100).toFixed(1)}% conf.
                     </span>
@@ -211,18 +230,22 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
                   <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
                     <div
                       className="bg-sky-500 h-full rounded-full transition-all duration-300"
-                      style={{ width: `${Math.round(prediction.category_confidence * 100)}%` }}
+                      style={{
+                        width: `${Math.round(prediction.category_confidence * 100)}%`,
+                      }}
                     />
                   </div>
                 </div>
 
                 {/* Predicted Priority */}
                 <div className="bg-white p-3.5 rounded-lg border border-slate-200">
-                  <div className="text-xs text-slate-500 font-medium">Predicted Priority</div>
+                  <div className="text-xs text-slate-500 font-medium">
+                    Predicted Priority
+                  </div>
                   <div className="flex items-center justify-between mt-1">
                     <span
                       className={`font-bold text-xs uppercase px-2.5 py-1 rounded-full border ${getPriorityBadgeColor(
-                        prediction.priority
+                        prediction.priority,
                       )}`}
                     >
                       {prediction.priority} Priority
@@ -235,7 +258,9 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
                   <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
                     <div
                       className="bg-slate-400 h-full rounded-full transition-all duration-300"
-                      style={{ width: `${Math.round(prediction.priority_confidence * 100)}%` }}
+                      style={{
+                        width: `${Math.round(prediction.priority_confidence * 100)}%`,
+                      }}
                     />
                   </div>
                 </div>
@@ -248,8 +273,8 @@ export const TicketForm: React.FC<TicketFormProps> = ({ onTicketCreated }) => {
             <button
               type="button"
               onClick={() => {
-                setTitle('');
-                setDescription('');
+                setTitle("");
+                setDescription("");
                 setPrediction(null);
                 setError(null);
               }}

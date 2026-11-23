@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # .../backend
@@ -17,9 +18,19 @@ def _with_driver(url: str, driver: str) -> str:
     psycopg2 for Alembic migrations, so we derive both from one setting.
     """
     scheme, rest = url.split("://", 1)
-    if not scheme.startswith("postgres"):
-        raise ValueError(f"DATABASE_URL must be a PostgreSQL URL, got scheme '{scheme}'")
     return f"postgresql+{driver}://{rest}"
+
+
+def _check_database_url(url: str) -> str:
+    """Fail at startup with a readable message (never echoing the password) if the URL is wrong."""
+    url = url.strip().strip("'\"")  # tolerate stray whitespace/quotes from copy-paste
+    if "://" not in url or not url.split("://", 1)[0].startswith("postgres"):
+        hint = "empty" if not url else f"starts with '{url[:12]}...'"
+        raise ValueError(
+            "DATABASE_URL must look like postgresql://USER:PASSWORD@HOST/DB?sslmode=require "
+            f"(the current value is {hint}). Paste only the URL, without 'psql' or quotes."
+        )
+    return url
 
 
 def _asyncpg_query(url: str) -> str:
@@ -60,6 +71,11 @@ class Settings(BaseSettings):
 
     MODEL_PATH: str = str(ARTIFACT_DIR / "ticket_classifier.joblib")
     METRICS_PATH: str = str(ARTIFACT_DIR / "metrics.json")
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _validate_database_url(cls, value: str) -> str:
+        return _check_database_url(value)
 
     @property
     def async_database_url(self) -> str:

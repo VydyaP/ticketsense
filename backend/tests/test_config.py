@@ -28,3 +28,9 @@ def test_bad_url_gives_readable_error_without_password(bad: str):
     with pytest.raises(ValidationError) as err:
         Settings(DATABASE_URL=bad)
     assert "DATABASE_URL must look like" in str(err.value)
+
+
+def test_error_never_contains_the_password():
+    with pytest.raises(ValidationError) as err:
+        Settings(DATABASE_URL="neondb_owner:SuperSecret123@ep-x.neon.tech/neondb")
+    assert "SuperSecret123" not in str(err.value)

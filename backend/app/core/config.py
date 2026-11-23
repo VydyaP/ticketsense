@@ -56,6 +56,8 @@ class Settings(BaseSettings):
         env_file=str(BASE_DIR.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        # Never echo setting values (e.g. the DB password) in validation errors / logs.
+        hide_input_in_errors=True,
     )
 
     PROJECT_NAME: str = "TicketSense API"
